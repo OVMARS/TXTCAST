@@ -9,7 +9,7 @@
     body { background: #000; margin: 0; padding: 0; font-family: 'Fira Code', monospace; color: #0f0; }
     .wrapper { max-width: 800px; margin: 3em auto; background: #111; padding: 2em; border-radius: 12px; box-shadow: 0 0 20px #0f03; }
     h1 { font-size: 1.8em; color: #fff; text-align: center; margin-bottom: 1em; }
-    .memo-box { background: #000; padding: 1em; border-radius: 8px; border: 1px solid #333; height: 260px; overflow-y: auto; font-size: 14px; white-space: pre-wrap; line-height: 1.4; }
+    .memo-box { background: #000; padding: 1em; border-radius: 8px; border: 1px solid #333; height: 260px; overflow-y: auto; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; line-height: 1.4; }
     .cursor { display: inline-block; width: 6px; animation: blink 0.8s infinite; background: #0f0; height: 1em; vertical-align: bottom; }
     @keyframes blink { 50% { opacity: 0; } }
     .status { color: #888; font-size: 12px; margin-top: 1em; text-align: center; }
@@ -23,105 +23,293 @@
   </div>
 
   <script>
+    const DEFAULT_HELIUS_API_KEY = "34ea16bb-80b2-4e57-ad72-e94ecda7028a"; // Public example key
+
     const RPC_URLS = [
-      "https://mainnet.helius-rpc.com/?api-key=34ea16bb-80b2-4e57-ad72-e94ecda7028a",
-      "https://solana-mainnet.api.syndica.io/api-key/4fRsA1YRvSoRL4iDmhgKn2KYJCSSKBPC3yWmB7BGtiZFaBdoJUyi52tcHTQGRNdsSAJiVYmf81JYcmzNj14BkqLJg4vucJSzH7",
-      "https://api.mainnet-beta.solana.com"
+      // Recommended: Use your own Helius API key for best performance
+      `https://mainnet.helius-rpc.com/?api-key=${DEFAULT_HELIUS_API_KEY}`, // Replace DEFAULT_HELIUS_API_KEY with your own if you have one
+      // Fallback Public RPC (can be rate-limited and less reliable)
+      "https://api.mainnet-beta.solana.com",
+      // You can add other RPCs here (e.g., from Alchemy, QuickNode with your own keys)
+      // "https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY",
     ];
 
-    let rpcIndex = 0;
-    const getConnection = () => new solanaWeb3.Connection(RPC_URLS[rpcIndex], "confirmed");
+    const WALLET_ADDRESS = "9Er7ydwgEXhun5L2mHmmcjBP5qUxLYFF44PuQttNo2Sx";
+    const FETCH_LIMIT = 50; // Transactions per API call (for both methods)
+    const MAX_TRANSACTIONS_TO_SCAN = 200; // Max total transactions to scan for memos in one update
+    const TYPING_SPEED_MS = 20;
+    const MEMO_DISPLAY_DURATION_MS = 7000;
+    const REFRESH_INTERVAL_MS = 120000; // 2 minutes
 
-    const walletAddress = new solanaWeb3.PublicKey("9Er7ydwgEXhun5L2mHmmcjBP5qUxLYFF44PuQttNo2Sx");
+    let rpcIndex = 0;
+    const walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
     const display = document.getElementById('memoDisplay');
     const status = document.getElementById('status');
-    const cursor = document.querySelector('.cursor');
+    const cursorElement = document.createElement('span');
+    cursorElement.className = 'cursor';
 
-    async function fetchTXTCASTMemos() {
-      const limit = 100;
-      let beforeSig = null;
-      const memos = [];
-      const seen = new Set();
-      const connection = getConnection();
+    let currentMemos = [];
+    let currentMemoIndex = 0;
+    let isTyping = false;
+    let displayCycleTimeoutId = null;
 
-      try {
-        while (true) {
-          const options = { limit };
-          if (beforeSig) options.before = beforeSig;
-          const signatures = await connection.getSignaturesForAddress(walletAddress, options);
-          if (!signatures.length) break;
-          beforeSig = signatures[signatures.length - 1].signature;
-
-          for (let sig of signatures) {
-            const tx = await connection.getParsedTransaction(sig.signature, { commitment: "confirmed" });
-            if (!tx?.transaction?.message) continue;
-
-            const allInstructions = [
-              ...(tx.transaction.message.instructions || []),
-              ...((tx.meta?.innerInstructions || []).flatMap(i => i.instructions) || [])
-            ];
-
-            for (let ix of allInstructions) {
-              let data = "";
-              if (ix.parsed && ix.parsed.type === "memo") {
-                data = ix.parsed.info.memo || "";
-              } else {
-                try { data = ix.data ? atob(ix.data) : ""; } catch (_) {}
-              }
-              if (/^TXTCAST/.test(data) && !seen.has(data)) {
-                memos.push(data.trim());
-                seen.add(data.trim());
-              }
-            }
-          }
-
-          if (signatures.length < limit) break;
+    function getApiKeyFromUrl(rpcUrl) {
+        try {
+            const url = new URL(rpcUrl);
+            return url.searchParams.get("api-key");
+        } catch (e) {
+            return null;
         }
+    }
 
-        return memos.reverse();
-      } catch (err) {
-        console.warn(`RPC error: ${RPC_URLS[rpcIndex]}`);
-        rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
-        return fetchTXTCASTMemos(); // try next RPC
+    const getConnection = () => {
+        const activeRpcUrl = RPC_URLS[rpcIndex % RPC_URLS.length];
+        return new solanaWeb3.Connection(activeRpcUrl, "confirmed");
+    };
+
+    // --- Helius Specific Fetch Function ---
+    async function fetchTXTCASTMemosViaHeliusAPI(apiKey, currentBeforeSig) {
+        const heliusApiUrl = `https://api.helius.xyz/v0/addresses/${WALLET_ADDRESS}/transactions/?api-key=${apiKey}`;
+        let queryParams = `&limit=${FETCH_LIMIT}`;
+        if (currentBeforeSig) {
+            queryParams += `&before=${currentBeforeSig}`;
+        }
+        console.log("Fetching from Helius Transaction History API...");
+
+        try {
+            const response = await fetch(heliusApiUrl + queryParams);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error(`Helius API error: ${response.status} ${response.statusText}`, errorText);
+                throw new Error(`Helius API request failed: ${response.status}`);
+            }
+            const transactions = await response.json();
+
+            if (!Array.isArray(transactions)) {
+                console.error("Helius API did not return an array:", transactions);
+                return { newMemos: [], lastSignature: currentBeforeSig, hasMore: false };
+            }
+
+            const memosFound = [];
+            let lastTxSignatureInBatch = null;
+
+            for (const tx of transactions) {
+                if (!tx || !tx.signature) continue;
+                lastTxSignatureInBatch = tx.signature; // Keep track of the last signature in this batch
+
+                // 1. Check Helius's top-level description
+                if (tx.description && /^TXTCAST/i.test(tx.description.trim())) {
+                    if (!memosFound.includes(tx.description.trim())) memosFound.push(tx.description.trim());
+                    continue;
+                }
+
+                // 2. Check instructions for parsed memos or SPL memo program
+                const instructionsToScan = [];
+                if (tx.instructions) instructionsToScan.push(...tx.instructions); // Helius specific parsed instructions
+                if (tx.transaction?.message?.instructions) instructionsToScan.push(...tx.transaction.message.instructions);
+                
+                // Helius v0 API might place inner instructions differently or parse them into top level tx.instructions
+                // For simplicity, we'll focus on main instructions here. A more robust parser would dig into innerInstructions too.
+
+                for (const ix of instructionsToScan) {
+                    let memoData = "";
+                    // Helius parsed memo in 'actions' or 'parsed'
+                    if (ix.actions) {
+                        for (const action of ix.actions) {
+                            if (action.type === "MEMO" && action.info?.memo) {
+                                memoData = action.info.memo;
+                                break;
+                            }
+                        }
+                    }
+                    if (!memoData && ix.parsed?.type?.toUpperCase() === "MEMO" && ix.parsed?.info?.memo) {
+                        memoData = ix.parsed.info.memo;
+                    }
+                    // Fallback: Standard SPL Memo
+                    if (!memoData && ix.programId === 'MemoSq4gqABAXKb96qnH8TysNcVtrp5GcC9YGN9qET9' && ix.data) {
+                        try { memoData = new TextDecoder().decode(solanaWeb3.utils.bytes.bs58.decode(ix.data)); } catch (_) {}
+                    }
+
+                    if (memoData && /^TXTCAST/i.test(memoData.trim())) {
+                        if (!memosFound.includes(memoData.trim())) memosFound.push(memoData.trim());
+                        // Break from instruction loop for this tx if TXTCAST found
+                        // as one TXTCAST per tx is typical for this use case.
+                        break; 
+                    }
+                }
+            }
+            return {
+                newMemos: memosFound, // Memos from this batch (newest first)
+                lastSignature: lastTxSignatureInBatch, // Signature of the oldest tx in this batch
+                hasMore: transactions.length === FETCH_LIMIT // If we got a full batch, there might be more
+            };
+        } catch (error) {
+            console.error("Error fetching or parsing from Helius API:", error);
+            throw error; // Re-throw to be handled by the main fetch function
+        }
+    }
+
+    // --- Main Fetch Function (uses Helius API if available, else standard RPC) ---
+    async function fetchTXTCASTMemos() {
+        const connection = getConnection();
+        const currentRpcUrl = connection.rpcEndpoint;
+        const heliusApiKey = getApiKeyFromUrl(currentRpcUrl);
+
+        const allFetchedMemos = [];
+        let beforeSig = null; // For pagination: fetch transactions before this signature
+        let transactionsScanned = 0;
+
+        try {
+            while (transactionsScanned < MAX_TRANSACTIONS_TO_SCAN) {
+                let batchMemos = [];
+                let lastProcessedSigInBatch = null;
+                let hasMoreInThisIteration = false;
+
+                if (heliusApiKey && currentRpcUrl.includes("helius-rpc.com")) {
+                    // Use Helius Transaction History API
+                    console.log("Using Helius Transaction History API.");
+                    const heliusResult = await fetchTXTCASTMemosViaHeliusAPI(heliusApiKey, beforeSig);
+                    batchMemos = heliusResult.newMemos;
+                    lastProcessedSigInBatch = heliusResult.lastSignature;
+                    hasMoreInThisIteration = heliusResult.hasMore;
+                    transactionsScanned += FETCH_LIMIT; // Assume we processed a full limit of potential txs
+                } else {
+                    // Use Standard Solana web3.js calls
+                    console.log("Using standard web3.js getSignaturesForAddress.");
+                    const options = { limit: FETCH_LIMIT };
+                    if (beforeSig) options.before = beforeSig;
+                    const signaturesInfo = await connection.getSignaturesForAddress(walletPublicKey, options);
+
+                    if (!signaturesInfo.length) break;
+                    
+                    lastProcessedSigInBatch = signaturesInfo[signaturesInfo.length - 1].signature;
+                    hasMoreInThisIteration = signaturesInfo.length === FETCH_LIMIT;
+                    transactionsScanned += signaturesInfo.length;
+
+                    for (const sigInfo of signaturesInfo) {
+                        const tx = await connection.getParsedTransaction(sigInfo.signature, {
+                            commitment: "confirmed",
+                            maxSupportedTransactionVersion: 0
+                        });
+                        if (!tx?.transaction?.message) continue;
+
+                        const allInstructions = [
+                            ...(tx.transaction.message.instructions || []),
+                            ...((tx.meta?.innerInstructions || []).flatMap(i => i.instructions) || [])
+                        ];
+
+                        for (const ix of allInstructions) {
+                            let memoData = "";
+                            if (ix.parsed?.type === "memo") {
+                                memoData = ix.parsed.info.memo || "";
+                            } else if (ix.programId?.toString() === 'MemoSq4gqABAXKb96qnH8TysNcVtrp5GcC9YGN9qET9' && ix.data) {
+                                try { memoData = new TextDecoder().decode(solanaWeb3.utils.bytes.bs58.decode(ix.data)); } catch (_) {}
+                            } else if (ix.data) { // Generic data decode attempt (less reliable)
+                                try { memoData = atob(ix.data); } catch (_) {}
+                            }
+
+                            if (/^TXTCAST/i.test(memoData.trim())) {
+                                if (!batchMemos.includes(memoData.trim())) batchMemos.push(memoData.trim());
+                                break; // Assume one TXTCAST memo per tx is enough for this purpose
+                            }
+                        }
+                    }
+                }
+
+                allFetchedMemos.push(...batchMemos);
+                if (lastProcessedSigInBatch) {
+                    beforeSig = lastProcessedSigInBatch;
+                }
+
+                if (!hasMoreInThisIteration) break; // No more transactions to fetch in this direction
+            }
+            console.log(`Fetched ${allFetchedMemos.length} TXTCAST memos in total this cycle.`);
+            return allFetchedMemos.reverse(); // Reverse to show oldest first in the display
+        } catch (err) {
+            console.warn(`Error during memo fetching with ${currentRpcUrl}:`, err);
+            rpcIndex = (rpcIndex + 1) % RPC_URLS.length; // Try next RPC
+            status.textContent = `RPC Error. Trying next RPC: ${RPC_URLS[rpcIndex % RPC_URLS.length].split('?')[0]}...`;
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait a bit before retrying
+            return fetchTXTCASTMemos(); // Recursive call to try next RPC / method
+        }
+    }
+
+
+    async function typeText(element, text) {
+      element.innerHTML = "";
+      for (let i = 0; i < text.length; i++) {
+        element.innerHTML += text[i];
+        element.appendChild(cursorElement);
+        await new Promise(r => setTimeout(r, TYPING_SPEED_MS));
+      }
+      if (cursorElement.parentNode === element) {
+        element.removeChild(cursorElement);
       }
     }
 
-    async function displayMemos() {
-      status.textContent = "🔄 Loading TXTCAST memos...";
-      display.innerHTML = "⌛ Loading memos...<span class='cursor'></span>";
-      const memos = await fetchTXTCASTMemos();
-
-      if (!memos.length) {
-        display.innerHTML = "No TXTCAST memos found.<span class='cursor'></span>";
-        status.textContent = "✅ Connected — No memos yet.";
+    async function cycleMemos() {
+      if (isTyping) return;
+      if (currentMemos.length === 0) {
+        display.innerHTML = "No TXTCAST memos found to display.";
+        if (cursorElement.parentNode === display) display.removeChild(cursorElement);
+        status.textContent = "✅ Connected — No memos yet. Will check again.";
+        displayCycleTimeoutId = setTimeout(cycleMemos, MEMO_DISPLAY_DURATION_MS);
         return;
       }
 
-      let index = 0;
-      status.textContent = `✅ Showing ${memos.length} TXTCAST memo(s).`;
+      isTyping = true;
+      const memoToDisplay = currentMemos[currentMemoIndex];
+      status.textContent = `Displaying memo ${currentMemoIndex + 1} of ${currentMemos.length}`;
 
-      async function typeMemo(text) {
-        display.innerHTML = "";
-        for (let i = 0; i < text.length; i++) {
-          display.innerHTML += text[i];
-          display.appendChild(cursor);
-          await new Promise(r => setTimeout(r, 25));
-        }
-      }
+      await typeText(display, memoToDisplay);
 
-      async function loop() {
-        while (index < memos.length) {
-          await typeMemo(memos[index]);
-          await new Promise(r => setTimeout(r, 5000));
-          index++;
-        }
-      }
+      currentMemoIndex = (currentMemoIndex + 1) % currentMemos.length;
+      isTyping = false;
 
-      loop();
+      displayCycleTimeoutId = setTimeout(cycleMemos, MEMO_DISPLAY_DURATION_MS);
     }
 
-    displayMemos();
-    setInterval(displayMemos, 120000);
+    async function updateAndDisplayMemos() {
+      console.log("Updating memos...");
+      status.textContent = "🔄 Fetching latest TXTCAST memos...";
+      if (!isTyping) {
+          display.innerHTML = "⌛ Loading memos...";
+          display.appendChild(cursorElement);
+      }
+
+      if (displayCycleTimeoutId) {
+        clearTimeout(displayCycleTimeoutId);
+        displayCycleTimeoutId = null;
+      }
+
+      const fetchedNewMemos = await fetchTXTCASTMemos();
+
+      if (fetchedNewMemos && fetchedNewMemos.length > 0) {
+        currentMemos = fetchedNewMemos; // Replace with the newly fetched list
+        if (currentMemoIndex >= currentMemos.length) currentMemoIndex = 0;
+        status.textContent = `✅ ${currentMemos.length} TXTCAST memos loaded. Displaying...`;
+      } else if (currentMemos.length === 0) { // No old memos and no new memos
+        status.textContent = "✅ Connected — No TXTCAST memos found yet.";
+        display.innerHTML = "No TXTCAST memos found.";
+        if (cursorElement.parentNode === display) display.removeChild(cursorElement);
+      } else { // Had old memos, but no new ones fetched
+         status.textContent = `✅ Keeping ${currentMemos.length} memos. No new TXTCAST memos found this cycle.`;
+      }
+
+      isTyping = false;
+      cycleMemos();
+    }
+
+    // --- Initial Load ---
+    if (RPC_URLS.length === 0 || RPC_URLS.every(url => url.includes("YOUR_"))) {
+        status.textContent = "ERROR: No valid RPC URLs configured. Please edit the script.";
+        display.innerHTML = "RPC Configuration Error";
+        console.error("FATAL: No valid RPC URLs are configured in the RPC_URLS array.");
+    } else {
+        updateAndDisplayMemos();
+        setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS);
+    }
+
   </script>
 </body>
 </html>
