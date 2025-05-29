@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>TXTCAST FEED (Corrected)</title>
+  <title>TXTCAST FEED</title>
   <script src="https://unpkg.com/@solana/web3.js@1.75.1/lib/index.iife.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" rel="stylesheet">
   <style>
@@ -13,7 +13,8 @@
     .cursor { display: inline-block; width: 6px; animation: blink 0.8s infinite; background: #0f0; height: 1em; vertical-align: bottom; }
     @keyframes blink { 50% { opacity: 0; } }
     .status { color: #888; font-size: 12px; margin-top: 1em; text-align: center; }
-    .warning { color: #ff0; font-size: 10px; text-align: center; margin-top: 5px;}
+    /* Added warning style from my previous version, can be removed if not desired */
+    .rpc-warning { color: #f80; font-size: 10px; text-align: center; margin-top: 5px; height: 12px; }
   </style>
 </head>
 <body>
@@ -21,7 +22,7 @@
     <h1>📡 TXTCAST Viewer</h1>
     <div class="memo-box" id="memoDisplay">Initializing...<span class="cursor"></span></div>
     <div class="status" id="status">Connecting to Solana RPC...</div>
-    <div class="warning" id="rpcWarning"></div>
+    <div class="rpc-warning" id="rpcWarningMessage"></div> <!-- For RPC specific warnings -->
   </div>
 
   <script>
@@ -29,34 +30,51 @@
     const HELIUS_PUBLIC_EXAMPLE_KEY = "34ea16bb-80b2-4e57-ad72-e94ecda7028a";
     const CORRECT_MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcVtrp5GcC9YGN9qET9";
 
+    // Using the Helius public example key as the primary, as requested.
     const RPC_URLS = [
-      // Recommended: Use your own Helius API key for best performance & reliability
-      // `https://mainnet.helius-rpc.com/?api-key=YOUR_OWN_HELIUS_KEY_HERE`,
-      // Using the public example key as requested for this specific correction:
       `https://mainnet.helius-rpc.com/?api-key=${HELIUS_PUBLIC_EXAMPLE_KEY}`,
-      // Fallback Public RPC (can be rate-limited and less reliable)
-      "https://api.mainnet-beta.solana.com",
+      "https://api.mainnet-beta.solana.com", // Fallback
     ];
+    // Helius Transaction History API base (using the same public example key)
+    const HELIUS_HISTORY_API_BASE = "https://api.helius.xyz/v0/addresses/";
+
 
     const WALLET_ADDRESS = "9Er7ydwgEXhun5L2mHmmcjBP5qUxLYFF44PuQttNo2Sx";
-    const FETCH_LIMIT = 50; // Transactions per API call
-    const MAX_TRANSACTIONS_TO_SCAN = 500; // Max total transactions to scan in one update (FETCH_LIMIT * 10 pages)
+    const FETCH_LIMIT = 50;
+    const MAX_TRANSACTIONS_TO_SCAN = 500;
     const TYPING_SPEED_MS = 20;
     const MEMO_DISPLAY_DURATION_MS = 7000;
     const REFRESH_INTERVAL_MS = 120000; // 2 minutes
 
     let rpcIndex = 0;
-    const walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
-    const display = document.getElementById('memoDisplay');
-    const status = document.getElementById('status');
-    const rpcWarningDiv = document.getElementById('rpcWarning');
-    const cursorElement = document.createElement('span');
-    cursorElement.className = 'cursor';
+    let walletPublicKey; // Will be initialized after solanaWeb3 is loaded
+    let display;
+    let statusDisplay;
+    let rpcWarningDisplay;
+    let cursorElement;
 
     let currentMemos = [];
     let currentMemoIndex = 0;
     let isTyping = false;
     let displayCycleTimeoutId = null;
+
+    // Function to initialize DOM elements once the script is sure they exist
+    function initializeDOMElements() {
+        display = document.getElementById('memoDisplay');
+        statusDisplay = document.getElementById('status');
+        rpcWarningDisplay = document.getElementById('rpcWarningMessage');
+        cursorElement = document.createElement('span');
+        cursorElement.className = 'cursor';
+
+        if (!display || !statusDisplay || !rpcWarningDisplay) {
+            console.error("CRITICAL: UI DOM elements not found. Display will not work.");
+            // Potentially display an error message directly on the body
+            document.body.innerHTML = "<h1 style='color:red; text-align:center;'>Critical Error: UI Elements Missing. Check Console.</h1>";
+            return false;
+        }
+        return true;
+    }
+
 
     function getApiKeyFromUrl(rpcUrl) {
         try {
@@ -67,58 +85,58 @@
 
     const getConnection = () => {
         const activeRpcUrl = RPC_URLS[rpcIndex % RPC_URLS.length];
-        if (getApiKeyFromUrl(activeRpcUrl) === HELIUS_PUBLIC_EXAMPLE_KEY) {
-            rpcWarningDiv.textContent = "Using Helius public example API key. This may be rate-limited. For best results, use your own free key from helius.dev.";
-        } else {
-            rpcWarningDiv.textContent = "";
+        if (rpcWarningDisplay) { // Check if display element exists
+            if (getApiKeyFromUrl(activeRpcUrl) === HELIUS_PUBLIC_EXAMPLE_KEY) {
+                rpcWarningDisplay.textContent = "Using Helius public example API key. May be rate-limited.";
+            } else {
+                rpcWarningDisplay.textContent = "";
+            }
         }
         return new solanaWeb3.Connection(activeRpcUrl, "confirmed");
     };
 
     function extractMemoFromInstruction(ix) {
         let memoData = "";
-        // Case 1: RPC parsed as 'spl-memo' and ix.parsed is the direct string (seen with Helius public key)
-        if (ix.program === "spl-memo" && typeof ix.parsed === 'string') {
-            memoData = ix.parsed;
-        }
-        // Case 2: RPC parsed as 'spl-memo' with standard object structure
-        else if (ix.program === "spl-memo" && ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
+        if (ix.program === "spl-memo") {
+            if (ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
+                memoData = ix.parsed.info.memo;
+            } else if (typeof ix.parsed === 'string') {
+                memoData = ix.parsed;
+            }
+        } else if (!ix.program && ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
             memoData = ix.parsed.info.memo;
-        }
-        // Case 3: Generic parsed memo (if program not set by RPC but type is memo)
-        else if (!ix.program && ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
-            memoData = ix.parsed.info.memo;
-        }
-        // Case 4: Fallback to raw data decoding using the CORRECT_MEMO_PROGRAM_ID
-        else if (ix.programId && ix.programId.toString() === CORRECT_MEMO_PROGRAM_ID && typeof ix.data === 'string') {
+        } else if (ix.programId && ix.programId.toString() === CORRECT_MEMO_PROGRAM_ID && typeof ix.data === 'string') {
             try {
                 memoData = new TextDecoder().decode(solanaWeb3.utils.bytes.bs58.decode(ix.data));
-            } catch (e) {
-                console.warn("Error decoding raw SPL Memo data:", e.message, "Raw data:", ix.data);
-            }
+            } catch (e) { console.warn("Error decoding raw SPL Memo data:", e.message); }
         }
         return memoData.trim();
     }
 
-    async function fetchTXTCASTMemosViaHeliusAPI(apiKey, currentBeforeSig) {
-        const heliusApiUrlBase = `https://api.helius.xyz/v0/addresses/${WALLET_ADDRESS}/transactions/`;
-        let queryParams = `?api-key=${apiKey}&limit=${FETCH_LIMIT}&transaction-type=TRANSFER&transaction-type=MEMO`; // Filter for potentially relevant types
+    async function fetchTXTCASTMemosViaHeliusHistoryAPI(apiKey, currentBeforeSig) {
+        // Note: The Helius transaction history API URL for a specific address is different from the one for multiple transactions.
+        // The one you provided `https://api.helius.xyz/v0/transactions/` is for specific tx signatures.
+        // The one for address history is `https://api.helius.xyz/v0/addresses/{address}/transactions/`
+        const heliusApiUrlForAddress = `${HELIUS_HISTORY_API_BASE}${WALLET_ADDRESS}/transactions/`;
+        let queryParams = `?api-key=${apiKey}&limit=${FETCH_LIMIT}`;
+        // Helius API has 'type' not 'transaction-type'. Let's try without type filter first for broader results.
+        // queryParams += `&type=ANY`; // Or be more specific e.g. type=TRANSFER&type=UNKNOWN (for memos)
         if (currentBeforeSig) {
             queryParams += `&before=${currentBeforeSig}`;
         }
-        const fullUrl = heliusApiUrlBase + queryParams;
-        console.log(`[HeliusAPI] Fetching: ${fullUrl.replace(apiKey, "YOUR_KEY")}`);
+        const fullUrl = heliusApiUrlForAddress + queryParams;
+        console.log(`[HeliusHistoryAPI] Fetching: ${fullUrl.replace(apiKey, "YOUR_KEY")}`);
 
         try {
             const response = await fetch(fullUrl);
             if (!response.ok) {
                 const errorText = await response.text();
-                console.error(`[HeliusAPI] Error: ${response.status}. Response: ${errorText}`);
-                throw new Error(`Helius API request failed: ${response.status}`);
+                console.error(`[HeliusHistoryAPI] Error: ${response.status}. Response: ${errorText}`);
+                throw new Error(`Helius History API request failed: ${response.status}`);
             }
             const transactions = await response.json();
             if (!Array.isArray(transactions)) {
-                console.error("[HeliusAPI] Did not return an array:", transactions);
+                console.error("[HeliusHistoryAPI] Did not return an array:", transactions);
                 return { newMemos: [], lastSignature: currentBeforeSig, hasMore: false };
             }
 
@@ -129,27 +147,43 @@
                 if (!tx || !tx.signature) continue;
                 lastTxSignatureInBatch = tx.signature;
 
-                // Helius Transaction History API might provide parsed memo directly in description or actions.
-                // This requires careful inspection of the Helius API response structure.
-                // For now, we'll rely on its `instructions` if available, or a simplified check.
                 if (tx.description && /^TXTCAST/i.test(tx.description.trim())) {
                     memosFound.add(tx.description.trim());
                     continue;
                 }
                 
                 const instructionsToScan = [];
-                if (tx.transaction?.message?.instructions) instructionsToScan.push(...tx.transaction.message.instructions);
-                if (tx.instructions && tx.instructions !== tx.transaction?.message?.instructions) { // Helius might have its own 'instructions' array
-                     instructionsToScan.push(...tx.instructions);
-                }
-                // Note: Helius V0 API structure for innerInstructions might differ.
-                // For simplicity, focusing on top-level or Helius-provided `instructions`.
+                // Helius v0 enriched transactions have `instructions` at the top level
+                if (tx.instructions) instructionsToScan.push(...tx.instructions);
+                // Also check `transaction.message.instructions` if the above is not present or different
+                else if (tx.transaction?.message?.instructions) instructionsToScan.push(...tx.transaction.message.instructions);
+
 
                 for (const ix of instructionsToScan) {
-                    const memo = extractMemoFromInstruction(ix);
-                    if (memo && /^TXTCAST/i.test(memo)) {
-                        memosFound.add(memo);
-                        break; // Assume one TXTCAST per tx
+                    // Helius v0 `instructions` are already quite parsed.
+                    // We need to adapt `extractMemoFromInstruction` or use Helius-specific fields.
+                    let memo = "";
+                    if (ix.programId === CORRECT_MEMO_PROGRAM_ID || (ix.accounts && ix.accounts.includes(CORRECT_MEMO_PROGRAM_ID))) { // Heuristic
+                        // Helius might put memo data directly in ix.data (need to verify if it's base64/utf8)
+                        // or in a more structured way if it parses the memo instruction itself.
+                        // For Helius parsed structure, look for something like:
+                        // ix.actions[j].type === "MEMO" -> ix.actions[j].info.memo
+                        // Or if ix.data is the raw memo string (less likely directly in Helius v0 parsed instruction)
+                        if (ix.data && typeof ix.data === 'string') { // Assuming Helius might put it here if not further parsed.
+                             try { memo = new TextDecoder().decode(solanaWeb3.utils.bytes.bs58.decode(ix.data)); } catch(_){}
+                        }
+                        // If Helius fully parses it (check example response from Helius API explorer):
+                        if (ix.parsed && typeof ix.parsed === 'string') { // Our known case
+                            memo = ix.parsed;
+                        } else if (ix.parsed && ix.parsed.info && ix.parsed.info.memo) {
+                            memo = ix.parsed.info.memo;
+                        }
+                    }
+                     if (!memo) memo = extractMemoFromInstruction(ix); // Try generic extraction
+
+                    if (memo && /^TXTCAST/i.test(memo.trim())) {
+                        memosFound.add(memo.trim());
+                        break;
                     }
                 }
             }
@@ -159,9 +193,9 @@
                 hasMore: transactions.length === FETCH_LIMIT
             };
         } catch (error) {
-            console.error("[HeliusAPI] Fetch/Parse Error:", error.message);
-            if (apiKey === HELIUS_PUBLIC_EXAMPLE_KEY && (error.message.includes("401") || error.message.includes("403") || error.message.includes("429"))) {
-                 console.warn("[HeliusAPI] Error with public key, likely rate limit or restriction on Transaction History API.");
+            console.error("[HeliusHistoryAPI] Fetch/Parse Error:", error.message);
+            if (apiKey === HELIUS_PUBLIC_EXAMPLE_KEY && (String(error).includes("401") || String(error).includes("403") || String(error).includes("429"))) {
+                 console.warn("[HeliusHistoryAPI] Error with public key for Helius History API.");
             }
             throw error;
         }
@@ -182,37 +216,37 @@
                 let batchMemos = [];
                 let lastProcessedSigInBatch = null;
                 let hasMoreInThisIteration = false;
-                let batchSize = 0;
+                let batchSizeAttempt = FETCH_LIMIT;
 
-                // Prioritize Helius Transaction History API if Helius RPC key is detected
+
                 if (heliusApiKey && currentRpcUrl.includes("helius-rpc.com")) {
-                    console.log(`[MainFetch] Attempting Helius Transaction History API. Page: ${Math.floor(transactionsScannedThisCycle/FETCH_LIMIT) + 1}`);
+                    console.log(`[MainFetch] Attempting Helius History API.`);
                     try {
-                        const heliusResult = await fetchTXTCASTMemosViaHeliusAPI(heliusApiKey, beforeSig);
+                        const heliusResult = await fetchTXTCASTMemosViaHeliusHistoryAPI(heliusApiKey, beforeSig);
                         batchMemos = heliusResult.newMemos;
                         lastProcessedSigInBatch = heliusResult.lastSignature;
                         hasMoreInThisIteration = heliusResult.hasMore;
-                        batchSize = FETCH_LIMIT; // Assume Helius API returns up to FETCH_LIMIT
+                        batchSizeAttempt = FETCH_LIMIT; // Helius API was asked for this many
                     } catch (heliusError) {
-                        console.warn("[MainFetch] Helius Transaction History API failed. Falling back to standard method for this cycle.", heliusError.message);
-                        // Fall through to standard method if Helius API fails
-                        // Reset batchSize to trigger standard method if it was set
-                        batchSize = 0; // This will ensure the 'else' block runs
+                        console.warn("[MainFetch] Helius History API failed. Falling back to standard method.", heliusError.message);
+                        batchSizeAttempt = 0; // Force standard method
                     }
+                } else {
+                     batchSizeAttempt = 0; // Not a Helius RPC, use standard
                 }
                 
-                // Standard Solana web3.js calls (if not Helius API or Helius API failed)
-                if (batchSize === 0) { // Check if we need to use standard method
-                    console.log(`[MainFetch] Using Standard web3.js getSignatures. Page: ${Math.floor(transactionsScannedThisCycle/FETCH_LIMIT) + 1}`);
+                if (batchSizeAttempt === 0) { // Use standard if Helius not attempted or failed
+                    console.log(`[MainFetch] Using Standard web3.js getSignatures.`);
                     const options = { limit: FETCH_LIMIT };
                     if (beforeSig) options.before = beforeSig;
                     const signaturesInfo = await connection.getSignaturesForAddress(walletPublicKey, options);
 
-                    batchSize = signaturesInfo.length;
                     if (!signaturesInfo.length) { console.log("[MainFetch-Std] No more signatures."); break; }
                     
                     lastProcessedSigInBatch = signaturesInfo[signaturesInfo.length - 1].signature;
                     hasMoreInThisIteration = signaturesInfo.length === FETCH_LIMIT;
+                    batchSizeAttempt = signaturesInfo.length;
+
 
                     for (const sigInfo of signaturesInfo) {
                         const tx = await connection.getParsedTransaction(sigInfo.signature, {
@@ -227,7 +261,7 @@
                         for (const ix of instructions) {
                             const memo = extractMemoFromInstruction(ix);
                             if (memo && /^TXTCAST/i.test(memo)) {
-                                batchMemos.push(memo); // Use push for array, will deduplicate later
+                                batchMemos.push(memo);
                                 break; 
                             }
                         }
@@ -235,11 +269,11 @@
                 }
 
                 batchMemos.forEach(memo => allFetchedMemos.add(memo));
-                transactionsScannedThisCycle += batchSize > 0 ? batchSize : FETCH_LIMIT; // Ensure progress
+                transactionsScannedThisCycle += batchSizeAttempt > 0 ? batchSizeAttempt : FETCH_LIMIT;
 
                 if (lastProcessedSigInBatch) {
                     beforeSig = lastProcessedSigInBatch;
-                } else { console.log("[MainFetch] No lastProcessedSigInBatch, breaking pagination."); break; }
+                } else { console.log("[MainFetch] No lastProcessedSigInBatch."); break; }
 
                 if (!hasMoreInThisIteration) { console.log("[MainFetch] No more Txs indicated by batch."); break; }
                 if (transactionsScannedThisCycle >= MAX_TRANSACTIONS_TO_SCAN) { console.log("[MainFetch] Reached MAX_TRANSACTIONS_TO_SCAN."); break; }
@@ -247,49 +281,56 @@
             console.log(`[MainFetch] Cycle done. Found ${allFetchedMemos.size} unique TXTCAST memos.`);
             return Array.from(allFetchedMemos).reverse(); 
         } catch (err) {
-            console.error(`[MainFetch] Error with ${currentRpcUrl.split('?')[0]}:`, err.message, err.stack);
+            console.error(`[MainFetch] Error with ${currentRpcUrl.split('?')[0]}:`, err.message);
             rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
-            const nextRpcDisplay = RPC_URLS[rpcIndex % RPC_URLS.length].split('?')[0];
-            status.textContent = `RPC Error. Trying next: ${nextRpcDisplay}...`;
+            if (statusDisplay) statusDisplay.textContent = `RPC Error. Trying next...`;
             await new Promise(resolve => setTimeout(resolve, 2000));
             return fetchTXTCASTMemos(); 
         }
     }
 
     async function typeText(element, text) {
+      if (!element) return;
       element.innerHTML = "";
       for (let i = 0; i < text.length; i++) {
         element.innerHTML += text[i];
-        element.appendChild(cursorElement);
+        if (cursorElement) element.appendChild(cursorElement);
         await new Promise(r => setTimeout(r, TYPING_SPEED_MS));
       }
-      if (cursorElement.parentNode === element) element.removeChild(cursorElement);
+      if (cursorElement && cursorElement.parentNode === element) {
+        element.removeChild(cursorElement);
+      }
     }
 
     async function cycleMemos() {
-      if (isTyping) return;
+      if (isTyping || !display) return; // Check if display exists
       if (currentMemos.length === 0) {
         display.innerHTML = "No TXTCAST memos found to display.";
-        if (cursorElement.parentNode === display) display.removeChild(cursorElement);
+        if (cursorElement && cursorElement.parentNode === display) display.removeChild(cursorElement);
         displayCycleTimeoutId = setTimeout(cycleMemos, MEMO_DISPLAY_DURATION_MS);
         return;
       }
       isTyping = true;
       const memoToDisplay = currentMemos[currentMemoIndex];
-      status.textContent = `📡 Displaying memo ${currentMemoIndex + 1} of ${currentMemos.length}`;
+      if (statusDisplay) statusDisplay.textContent = `📡 Displaying memo ${currentMemoIndex + 1} of ${currentMemos.length}`;
+      
       await typeText(display, memoToDisplay);
+      
       currentMemoIndex = (currentMemoIndex + 1) % currentMemos.length;
       isTyping = false;
       displayCycleTimeoutId = setTimeout(cycleMemos, MEMO_DISPLAY_DURATION_MS);
     }
 
     async function updateAndDisplayMemos() {
-      console.log("[UpdateCycle] Starting updateAndDisplayMemos...");
-      status.textContent = "🔄 Fetching latest TXTCAST memos...";
-      if (!isTyping) {
-          display.innerHTML = "⌛ Loading memos...";
-          display.appendChild(cursorElement);
+      if (!display || !statusDisplay) { // Check if display elements exist
+          console.error("UI elements not ready for updateAndDisplayMemos");
+          return;
       }
+      console.log("[UpdateCycle] Starting updateAndDisplayMemos...");
+      statusDisplay.textContent = "🔄 Fetching latest TXTCAST memos...";
+      display.innerHTML = "⌛ Loading memos...";
+      if(cursorElement) display.appendChild(cursorElement);
+      
       if (displayCycleTimeoutId) {
         clearTimeout(displayCycleTimeoutId);
         displayCycleTimeoutId = null;
@@ -300,25 +341,43 @@
       if (fetchedNewMemos && fetchedNewMemos.length > 0) {
         currentMemos = fetchedNewMemos;
         if (currentMemoIndex >= currentMemos.length) currentMemoIndex = 0;
-        status.textContent = `✅ ${currentMemos.length} TXTCAST memos ready. Displaying...`;
+        statusDisplay.textContent = `✅ ${currentMemos.length} TXTCAST memos ready. Displaying...`;
       } else if (currentMemos.length === 0) {
-        status.textContent = "✅ Connected — No TXTCAST memos found yet. Will retry.";
+        statusDisplay.textContent = "✅ Connected — No TXTCAST memos found yet. Will retry.";
         display.innerHTML = "No TXTCAST memos found.";
+        if(cursorElement && cursorElement.parentNode === display) display.removeChild(cursorElement);
       } else {
-         status.textContent = `✅ ${currentMemos.length} memos kept. No new TXTCAST memos this cycle.`;
+         statusDisplay.textContent = `✅ ${currentMemos.length} memos kept. No new TXTCAST memos this cycle.`;
       }
       isTyping = false;
       cycleMemos();
     }
 
-    if (RPC_URLS.length === 0 || RPC_URLS.every(url => url.includes("YOUR_OWN_HELIUS_KEY_HERE") && url.includes(HELIUS_PUBLIC_EXAMPLE_KEY) )) { // Check if only placeholder or example key is left
-        status.textContent = "ERROR: No valid custom RPC URLs configured. Edit script for best results.";
-        display.innerHTML = "RPC Configuration Error";
-        rpcWarningDiv.textContent = "Consider adding your own Helius (or other provider) API key in the RPC_URLS array for reliability.";
-    } else {
-        updateAndDisplayMemos();
-        setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS);
-    }
+    // --- Initialization ---
+    // Wait for the DOM to be fully loaded before trying to access elements
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!initializeDOMElements()) {
+            return; // Stop if UI elements are not found
+        }
+
+        try {
+            walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
+        } catch (e) {
+            console.error("Invalid Wallet Address:", WALLET_ADDRESS, e);
+            statusDisplay.textContent = "ERROR: Invalid Wallet Address.";
+            display.innerHTML = "Configuration Error.";
+            return;
+        }
+
+        if (RPC_URLS.length === 0 || RPC_URLS.every(url => url.includes("YOUR_OWN") && !url.includes(HELIUS_PUBLIC_EXAMPLE_KEY) )) {
+            statusDisplay.textContent = "ERROR: No valid custom RPC URLs configured.";
+            display.innerHTML = "RPC Configuration Error.";
+            if(rpcWarningDisplay) rpcWarningDisplay.textContent = "Add your Helius key in RPC_URLS for reliability.";
+        } else {
+            updateAndDisplayMemos();
+            setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS);
+        }
+    });
   </script>
 </body>
 </html>
