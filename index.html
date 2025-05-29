@@ -16,12 +16,12 @@
         border: 1px solid #333;
         height: 260px;
         overflow-y: auto;
-        font-size: 12px; /* <<< SMALLER FONT SIZE */
+        font-size: 12px; /* Smaller font size */
         white-space: pre-wrap;
         word-wrap: break-word;
-        line-height: 1.5; /* Adjusted for smaller font */
-        color: #0f0; /* Base color */
-        text-shadow: /* <<< GLOW EFFECT */
+        line-height: 1.5;
+        color: #0f0;
+        text-shadow: /* Green glow effect */
             0 0 5px #0f0,
             0 0 10px #0f0,
             0 0 15px #0f0,
@@ -29,18 +29,19 @@
     }
     .cursor {
         display: inline-block;
-        width: 5px; /* Slightly thinner cursor */
+        width: 5px;
         animation: blink 0.7s infinite;
         background: #0f0;
-        height: 0.9em; /* Adjusted to font size */
-        vertical-align: baseline; /* Better alignment with text */
+        height: 0.9em; /* Relative to font size */
+        vertical-align: baseline;
+        margin-left: 1px;
         box-shadow: /* Cursor also glows */
             0 0 5px #0f0,
             0 0 10px #0f0;
     }
     @keyframes blink { 50% { opacity: 0; } }
     .status { color: #888; font-size: 12px; margin-top: 1em; text-align: center; }
-    .rpc-warning { display: none !important; }
+    .rpc-warning { display: none !important; /* Hide RPC warning */ }
   </style>
 </head>
 <body>
@@ -65,66 +66,69 @@
     const FETCH_LIMIT_SIGS = 100;
     const MAX_SIGNATURE_PAGES = 7;
     const DELAY_BETWEEN_TX_FETCHES_MS = 100;
-    const TYPING_SPEED_MS = 30; // Slightly adjusted typing speed
-    const MEMO_DISPLAY_DURATION_MS = 6000; // Time to show a full memo before cycling
-    const REFRESH_INTERVAL_MS = 180000;
+    const TYPING_SPEED_MS = 35; // Adjust for blip sound timing
+    const MEMO_DISPLAY_DURATION_MS = 7000; // Time to show a full memo
+    const REFRESH_INTERVAL_MS = 180000; // 3 minutes
 
     // --- Audio Context for Blip Sound ---
     let audioCtx;
-    let blipOscillator;
-    let blipGain;
-
-    function setupAudio() {
+    // Function to initialize AudioContext, ideally on first user interaction
+    function initAudioContext() {
         if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                console.log("AudioContext initialized.");
+            } catch (e) {
+                console.error("Error initializing AudioContext:", e);
+            }
         }
     }
-    // Call setupAudio once, perhaps after a user interaction if strict autoplay policies are an issue,
-    // but for this, we'll try on load.
-    // Browsers might require a user gesture (like a click) to start audio.
-    // We can call setupAudio() inside a click handler or on first type if needed.
+    // Attempt to initialize audio context early or on first click
+    // document.body.addEventListener('click', initAudioContext, { once: true });
 
 
     function playBlip() {
-        if (!audioCtx) { // Try to initialize if not already
-            setupAudio();
-            if (!audioCtx) return; // Still no audio context
+        if (!audioCtx) {
+            initAudioContext(); // Try to initialize if not done
+            if(!audioCtx) { // Still no audio context, probably due to browser policy
+                console.warn("AudioContext not available or not started by user gesture. Blip sound disabled.");
+                return;
+            }
+        }
+        if (audioCtx.state === 'suspended') { // If suspended, try to resume (requires user gesture)
+            audioCtx.resume().then(() => console.log("AudioContext resumed."));
         }
 
-        // Create oscillator and gain node if they don't exist or to reset
-        blipOscillator = audioCtx.createOscillator();
-        blipGain = audioCtx.createGain();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
 
-        blipOscillator.connect(blipGain);
-        blipGain.connect(audioCtx.destination);
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
 
-        blipOscillator.type = 'sine'; // Sine wave for a clean tone
-        blipOscillator.frequency.setValueAtTime(1200, audioCtx.currentTime); // High tone (Hz)
-        blipGain.gain.setValueAtTime(0.1, audioCtx.currentTime); // Adjust volume (0 to 1)
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime); // High tone
+        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime); // Keep volume low
 
-        blipOscillator.start(audioCtx.currentTime);
-        // Make the sound very short
-        blipGain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.05); // Quick fade out
-        blipOscillator.stop(audioCtx.currentTime + 0.05);
+        oscillator.start(audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.04);
+        oscillator.stop(audioCtx.currentTime + 0.04);
     }
-
 
     let rpcIndex = 0;
     let walletPublicKey;
     let memoDisplayDiv;
     let statusDiv;
-    let cursorElement; // Re-added for typewriter
+    let cursorElement;
 
-    let currentMemos = [];    // Stores all fetched memos
-    let currentMemoIndex = 0; // Index for cycling through currentMemos
+    let currentMemos = [];
+    let currentMemoIndex = 0;
     let isTyping = false;
     let displayCycleTimeoutId = null;
-
 
     function initializeDOMElements() {
         memoDisplayDiv = document.getElementById('memoDisplay');
         statusDiv = document.getElementById('statusDisplay');
-        cursorElement = document.createElement('span'); // Create cursor for typewriter
+        cursorElement = document.createElement('span');
         cursorElement.className = 'cursor';
 
         if (!memoDisplayDiv || !statusDiv) {
@@ -132,17 +136,18 @@
             document.body.innerHTML = "<h1 style='color:red; text-align:center;'>Critical Error: UI Elements Missing.</h1>";
             return false;
         }
-        memoDisplayDiv.innerHTML = "Initializing...";
-        if(cursorElement) memoDisplayDiv.appendChild(cursorElement); // Add cursor initially
+        // Initial state for memoDisplay with cursor
+        memoDisplayDiv.innerHTML = "";
+        memoDisplayDiv.appendChild(cursorElement);
         return true;
     }
 
-    const getConnection = () => { /* ... same as before ... */
+    const getConnection = () => { /* ... (same as previous correct version) ... */
         const activeRpcUrl = RPC_URLS[rpcIndex % RPC_URLS.length];
         console.log(`[Connection] Using RPC: ${activeRpcUrl.split('?')[0]}`);
         return new solanaWeb3.Connection(activeRpcUrl, "confirmed");
     };
-    const extractMemoFromInstruction = (ix) => { /* ... same as before ... */
+    const extractMemoFromInstruction = (ix) => { /* ... (same as previous correct version) ... */
         let memoData = "";
         if (ix.program === "spl-memo") {
             if (ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
@@ -159,7 +164,7 @@
         }
         return memoData.trim();
     };
-    const fetchAllTxTcastMemos = async () => { /* ... same as before, ensuring it returns memosArray.reverse() ... */
+    const fetchAllTxTcastMemos = async () => { /* ... (same as previous correct version) ... */
         if (!walletPublicKey) {
             console.error("Wallet PublicKey not initialized.");
             if (statusDiv) statusDiv.textContent = "Error: Wallet not initialized.";
@@ -247,9 +252,111 @@
     };
 
 
-    // --- Typewriter and Cycling Logic ---
+    // --- Typewriter and Cycling Logic (Re-introduced) ---
     async function typeText(element, text) {
         if (!element || !cursorElement) return;
-        element.innerHTML = ""; // Clear previous content before typing new memo
+        let currentText = "";
+        element.innerHTML = ""; // Clear previous memo
+        element.appendChild(cursorElement); // Add cursor at the beginning
 
-        //
+        for (let i = 0; i < text.length; i++) {
+            currentText += text[i];
+            element.textContent = currentText; // Set text content directly
+            element.appendChild(cursorElement); // Re-append cursor at the end
+            playBlip(); // Play sound for each character
+            await new Promise(r => setTimeout(r, TYPING_SPEED_MS));
+        }
+        // Cursor remains at the end after typing.
+    }
+
+    async function cycleMemos() {
+        if (isTyping || !memoDisplayDiv) return;
+        if (currentMemos.length === 0) {
+            memoDisplayDiv.textContent = "No TXTCAST memos found to display.";
+            // No cursor if no memos to type
+            if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
+            displayCycleTimeoutId = setTimeout(cycleMemos, MEMO_DISPLAY_DURATION_MS); // Retry later
+            return;
+        }
+
+        isTyping = true;
+        const memoToDisplay = currentMemos[currentMemoIndex];
+        if (statusDiv) statusDiv.textContent = `📡 Displaying memo ${currentMemoIndex + 1} of ${currentMemos.length}`;
+
+        await typeText(memoDisplayDiv, memoToDisplay);
+
+        currentMemoIndex = (currentMemoIndex + 1) % currentMemos.length;
+        isTyping = false;
+
+        // Wait for MEMO_DISPLAY_DURATION_MS before typing the next one
+        displayCycleTimeoutId = setTimeout(cycleMemos, MEMO_DISPLAY_DURATION_MS);
+    }
+
+    async function updateAndDisplayMemos() {
+        if (!initializeDOMElements()) return;
+
+        console.log("[UpdateCycle] Starting update...");
+        if (statusDiv) statusDiv.textContent = "🔄 Fetching latest TXTCAST memos...";
+        if (memoDisplayDiv && !isTyping) { // Only update if not currently typing
+             memoDisplayDiv.innerHTML = "⌛ Loading memos...";
+             memoDisplayDiv.appendChild(cursorElement);
+        }
+
+        // Clear existing cycle timeout to prevent overlap if fetch is slow
+        if (displayCycleTimeoutId) {
+            clearTimeout(displayCycleTimeoutId);
+            displayCycleTimeoutId = null;
+        }
+
+        const fetchedNewMemos = await fetchAllTxTcastMemos();
+
+        if (fetchedNewMemos && fetchedNewMemos.length > 0) {
+            currentMemos = fetchedNewMemos; // Update the global list
+            // If it was already cycling, or if we're starting, reset index if it's out of bounds
+            if (currentMemoIndex >= currentMemos.length) currentMemoIndex = 0;
+            if (statusDiv) statusDiv.textContent = `✅ ${currentMemos.length} TXTCAST memos ready.`;
+        } else if (currentMemos.length === 0) { // No old memos and no new ones
+            if (statusDiv) statusDiv.textContent = "✅ Connected — No TXTCAST memos found yet. Will retry.";
+            if (memoDisplayDiv) {
+                memoDisplayDiv.textContent = "No TXTCAST memos found to display.";
+                 if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
+            }
+        } else { // Had old memos, but no new ones found this cycle
+             if (statusDiv) statusDiv.textContent = `✅ ${currentMemos.length} memos kept. No new TXTCASTs this cycle.`;
+        }
+        
+        // Restart the display cycle if it's not already running due to an ongoing typing animation
+        // or if memos were just loaded for the first time.
+        if (!isTyping) {
+            isTyping = false; // Ensure it's reset
+            cycleMemos(); // Start or restart the memo display cycle
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!initializeDOMElements()) {
+            return;
+        }
+        // Try to initialize AudioContext on first interaction to comply with browser policies
+        document.body.addEventListener('click', initAudioContext, { once: true });
+        document.body.addEventListener('touchstart', initAudioContext, { once: true });
+
+
+        try {
+            walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
+        } catch (e) {
+            console.error("Invalid Wallet Address:", WALLET_ADDRESS, e);
+            if (statusDiv) statusDiv.textContent = "ERROR: Invalid Wallet Address.";
+            if (memoDisplayDiv) {
+                memoDisplayDiv.textContent = "Configuration Error.";
+                if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
+            }
+            return;
+        }
+
+        updateAndDisplayMemos();
+        setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS);
+    });
+  </script>
+</body>
+</html>
