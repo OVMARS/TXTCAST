@@ -10,6 +10,7 @@
     pre { background: #222; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; }
     .success { color: #0f0; }
     .error { color: #f00; }
+    .warning { color: #ff0; }
   </style>
 </head>
 <body>
@@ -18,16 +19,7 @@
 
   <script>
     // --- Configuration ---
-    // IMPORTANT: Use the RPC URL you were testing with in the previous simplified script.
-    // Option 1: Helius example RPC (replace with your own Helius RPC key if you have one)
     const RPC_URL = "https://mainnet.helius-rpc.com/?api-key=34ea16bb-80b2-4e57-ad72-e94ecda7028a";
-
-    // Option 2: Public Solana RPC (can be rate-limited)
-    // const RPC_URL = "https://api.mainnet-beta.solana.com";
-
-    // Option 3: Your own private/paid RPC
-    // const RPC_URL = "YOUR_PRIVATE_RPC_URL_HERE";
-
 
     const TRANSACTION_SIGNATURES_TO_TEST = [
       "4ihrUYY7FEpjwH8552nCMSeqiSMN8uBXxUtnT9ecEgp3epkQMjs75rx2nZvjP37YUDcdAsdQ8AZNbgUcJqDmgZfR",
@@ -38,6 +30,7 @@
 
     async function testSpecificTransactions() {
       outputDiv.innerHTML = `Connecting to RPC: ${RPC_URL.split('?')[0]}...<br>`;
+      outputDiv.innerHTML += `<span class="warning">Warning: Using Helius public example API key. This may be rate-limited or have restrictions. For reliable testing/use, get your own free key from helius.dev.</span><br>`;
       const connection = new solanaWeb3.Connection(RPC_URL, "confirmed");
 
       for (const sig of TRANSACTION_SIGNATURES_TO_TEST) {
@@ -45,20 +38,20 @@
         try {
           const tx = await connection.getParsedTransaction(sig, {
             commitment: "confirmed",
-            maxSupportedTransactionVersion: 0
+            maxSupportedTransactionVersion: 0 // Important for compatibility
           });
 
           if (!tx) {
-            outputDiv.innerHTML += `<span class="error">Error: Transaction data not found or null for ${sig}</span><br>`;
+            outputDiv.innerHTML += `<span class="error">Error: Transaction data not found or null for ${sig}. This could be an RPC issue or severe rate limiting.</span><br>`;
             console.error(`Transaction data not found or null for ${sig}`, tx);
             continue;
           }
 
           outputDiv.innerHTML += `Transaction fetched. Slot: ${tx.slot}<br>`;
-          // console.log(`Raw TX object for ${sig}:`, JSON.parse(JSON.stringify(tx))); // Deep copy for logging
+          // console.log(`Raw TX object for ${sig}:`, JSON.parse(JSON.stringify(tx)));
 
           if (!tx.transaction || !tx.transaction.message) {
-            outputDiv.innerHTML += `<span class="error">Error: tx.transaction or tx.transaction.message is missing for ${sig}</span><br>`;
+            outputDiv.innerHTML += `<span class="error">Error: tx.transaction or tx.transaction.message is missing for ${sig}. The RPC might have returned incomplete data.</span><br>`;
             console.error(`tx.transaction or tx.transaction.message is missing for ${sig}`, tx);
             continue;
           }
@@ -67,7 +60,6 @@
           if (tx.meta && tx.meta.innerInstructions) {
             outputDiv.innerHTML += `Found ${tx.meta.innerInstructions.length} sets of inner instructions.<br>`;
           }
-
 
           let memoFoundInTx = false;
           const instructionsToParse = [
@@ -80,16 +72,14 @@
           for (let i = 0; i < instructionsToParse.length; i++) {
             const ix = instructionsToParse[i];
             outputDiv.innerHTML += `--- Checking instruction ${i + 1} ---<br>`;
-            outputDiv.innerHTML += `Program ID: ${ix.programId ? ix.programId.toString() : 'N/A (likely parsed directly)'}<br>`;
+            outputDiv.innerHTML += `Program ID: ${ix.programId ? ix.programId.toString() : 'N/A (likely parsed directly by RPC)'}<br>`;
 
             let memoData = "";
 
-            // Check if Helius (or other RPC) already parsed it as a memo object
             if (ix.parsed && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
               memoData = ix.parsed.info.memo;
-              outputDiv.innerHTML += `Found parsed memo directly: "${memoData}"<br>`;
+              outputDiv.innerHTML += `Found parsed memo directly by RPC: "${memoData}"<br>`;
             }
-            // Check for SPL Memo Program ID and try to decode 'data'
             else if (ix.programId && ix.programId.toString() === 'MemoSq4gqABAXKb96qnH8TysNcVtrp5GcC9YGN9qET9' && ix.data) {
               outputDiv.innerHTML += `Is SPL Memo Program. Raw data (base58): ${ix.data}<br>`;
               try {
@@ -101,18 +91,17 @@
               }
             } else {
                  outputDiv.innerHTML += `Not a directly parsed memo or recognized SPL Memo program instruction.<br>`;
-                 // Log the instruction structure if it's not what we expect
-                 // console.log(`Instruction ${i+1} structure for ${sig}:`, JSON.parse(JSON.stringify(ix)));
+                 // console.log(`Instruction ${i+1} structure for ${sig}:`, JSON.parse(JSON.stringify(ix))); // For deep debug
             }
 
             if (memoData && /^TXTCAST/i.test(memoData.trim())) {
               outputDiv.innerHTML += `<span class="success">SUCCESS: TXTCAST Found: "${memoData.trim()}"</span><br>`;
               memoFoundInTx = true;
-              break; // Found it, move to next transaction
+              break; 
             } else if (memoData) {
               outputDiv.innerHTML += `Found a memo, but it does not start with TXTCAST: "${memoData.trim()}"<br>`;
             }
-          } // end instruction loop
+          }
 
           if (!memoFoundInTx) {
             outputDiv.innerHTML += `<span class="error">No TXTCAST memo found in transaction ${sig} after checking all instructions.</span><br>`;
@@ -121,15 +110,16 @@
         } catch (error) {
           outputDiv.innerHTML += `<span class="error">MAJOR ERROR fetching/processing transaction ${sig}: ${error.message}</span><br>`;
           console.error(`Error fetching/processing transaction ${sig}:`, error, error.stack);
-           if (error.message.includes("429") || error.message.toLowerCase().includes("rate limit")) {
-                outputDiv.innerHTML += `<span class="error">This was likely a RATE LIMIT error from the RPC.</span><br>`;
+           if (error.message.includes("429") || error.message.toLowerCase().includes("rate limit") || error.message.toLowerCase().includes("rate exceeded")) {
+                outputDiv.innerHTML += `<span class="error">This was likely a RATE LIMIT error from the RPC. Try again in a minute, or get a personal API key.</span><br>`;
+            } else if (error.message.toLowerCase().includes("failed to fetch")) {
+                outputDiv.innerHTML += `<span class="error">"Failed to fetch". This could be a network issue, CORS problem (unlikely for public RPCs), or the RPC endpoint is down/unreachable.</span><br>`;
             }
         }
-      } // end transaction loop
+      }
       outputDiv.innerHTML += "<hr>Test complete.<br>";
     }
 
-    // Run the test
     testSpecificTransactions();
   </script>
 </body>
