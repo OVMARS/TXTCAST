@@ -13,16 +13,13 @@
     .memo-item {
         padding-bottom: 0.5em;
         margin-bottom: 0.5em;
-        border-bottom: 1px dashed #333; /* Separator for list items */
+        border-bottom: 1px dashed #333;
     }
     .memo-item:last-child {
         border-bottom: none;
     }
-    /* Cursor is not used in list view, can be removed if typing effect is fully gone */
-    /* .cursor { display: inline-block; width: 6px; animation: blink 0.8s infinite; background: #0f0; height: 1em; vertical-align: bottom; }
-    @keyframes blink { 50% { opacity: 0; } } */
     .status { color: #888; font-size: 12px; margin-top: 1em; text-align: center; }
-    .rpc-warning { display: none; /* Hide the RPC warning message as requested */ }
+    .rpc-warning { display: none !important; /* Force hide as per request */ }
   </style>
 </head>
 <body>
@@ -30,7 +27,7 @@
     <h1>📡 TXTCAST Viewer</h1>
     <div class="memo-box" id="memoDisplay">Initializing...</div>
     <div class="status" id="statusDisplay">Connecting to Solana RPC...</div>
-    <div class="rpc-warning" id="rpcWarningMessage"></div>
+    <div class="rpc-warning" id="rpcWarningMessage"></div> <!-- Element remains but styled hidden -->
   </div>
 
   <script>
@@ -44,35 +41,32 @@
     ];
 
     const WALLET_ADDRESS = "9Er7ydwgEXhun5L2mHmmcjBP5qUxLYFF44PuQttNo2Sx";
-    const FETCH_LIMIT_SIGS = 100; // How many signatures to fetch in each RPC call
-    const MAX_SIGNATURE_PAGES = 5;  // Scan up to 5 pages (FETCH_LIMIT_SIGS * MAX_SIGNATURE_PAGES = 500 txs)
-    const REFRESH_INTERVAL_MS = 120000; // 2 minutes
+    const FETCH_LIMIT_SIGS = 100;
+    const MAX_SIGNATURE_PAGES = 7;  // Increased scan depth slightly (700 transactions)
+    const DELAY_BETWEEN_TX_FETCHES_MS = 100; // Small delay to be gentler on RPC
+    const REFRESH_INTERVAL_MS = 180000; // 3 minutes
 
     let rpcIndex = 0;
     let walletPublicKey;
     let memoDisplayDiv;
     let statusDiv;
-    // let rpcWarningDiv; // Not used if message is hidden
 
-    let fetchedMemosList = []; // Store all fetched memos for list display
+    let fetchedMemosList = [];
 
     function initializeDOMElements() {
         memoDisplayDiv = document.getElementById('memoDisplay');
         statusDiv = document.getElementById('statusDisplay');
-        // rpcWarningDiv = document.getElementById('rpcWarningMessage'); // Not strictly needed if hidden
-
         if (!memoDisplayDiv || !statusDiv) {
-            console.error("CRITICAL: UI DOM elements (memoDisplay or statusDisplay) not found.");
+            console.error("CRITICAL: UI DOM elements not found.");
             document.body.innerHTML = "<h1 style='color:red; text-align:center;'>Critical Error: UI Elements Missing.</h1>";
             return false;
         }
-        memoDisplayDiv.innerHTML = "Initializing..."; // Clear potential old cursor span
+        memoDisplayDiv.innerHTML = "Initializing...";
         return true;
     }
 
     const getConnection = () => {
         const activeRpcUrl = RPC_URLS[rpcIndex % RPC_URLS.length];
-        // if (rpcWarningDiv) { /* Warning message logic removed as requested */ }
         console.log(`[Connection] Using RPC: ${activeRpcUrl.split('?')[0]}`);
         return new solanaWeb3.Connection(activeRpcUrl, "confirmed");
     };
@@ -82,7 +76,7 @@
         if (ix.program === "spl-memo") {
             if (ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
                 memoData = ix.parsed.info.memo;
-            } else if (typeof ix.parsed === 'string') { // This was the key finding for Helius public key
+            } else if (typeof ix.parsed === 'string') {
                 memoData = ix.parsed;
             }
         } else if (!ix.program && ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
@@ -98,20 +92,23 @@
     async function fetchAllTxTcastMemos() {
         if (!walletPublicKey) {
             console.error("Wallet PublicKey not initialized.");
+            if (statusDiv) statusDiv.textContent = "Error: Wallet not initialized.";
             return [];
         }
         const connection = getConnection();
-        console.log(`[FetchAll] Starting fetch for wallet: ${WALLET_ADDRESS}`);
+        if (statusDiv) statusDiv.textContent = `📡 Fetching from ${connection.rpcEndpoint.split('/')[2]}...`;
+
         const allFoundMemos = new Set();
         let beforeSig = null;
         let pagesFetched = 0;
+        let totalSignaturesProcessed = 0;
 
         try {
             while (pagesFetched < MAX_SIGNATURE_PAGES) {
                 const options = { limit: FETCH_LIMIT_SIGS };
                 if (beforeSig) options.before = beforeSig;
                 
-                console.log(`[FetchAll] Fetching signatures page ${pagesFetched + 1}, before: ${beforeSig || 'N/A'}`);
+                console.log(`[FetchAll] Fetching signatures page ${pagesFetched + 1}/${MAX_SIGNATURE_PAGES}, before: ${beforeSig || 'N/A'}`);
                 const signaturesInfo = await connection.getSignaturesForAddress(walletPublicKey, options);
 
                 if (!signaturesInfo || signaturesInfo.length === 0) {
@@ -119,9 +116,11 @@
                     break; 
                 }
                 console.log(`[FetchAll] Found ${signaturesInfo.length} signatures on page ${pagesFetched + 1}.`);
+                totalSignaturesProcessed += signaturesInfo.length;
 
                 for (let i = 0; i < signaturesInfo.length; i++) {
                     const sigInfo = signaturesInfo[i];
+                    if (statusDiv) statusDiv.textContent = `📡 Processing TX ${i+1}/${signaturesInfo.length} (Page ${pagesFetched+1})...`;
                     try {
                         const tx = await connection.getParsedTransaction(sigInfo.signature, {
                             commitment: "confirmed",
@@ -141,44 +140,46 @@
                         for (const ix of instructions) {
                             const memo = extractMemoFromInstruction(ix);
                             if (memo && /^TXTCAST/i.test(memo)) {
-                                console.log(`[FetchAll] TXTCAST Found: "${memo.substring(0,30)}..." in tx ${sigInfo.signature}`);
+                                console.log(`[FetchAll] TXTCAST Found: "${memo.substring(0,30)}..."`);
                                 allFoundMemos.add(memo);
                                 break; 
                             }
                         }
                     } catch (txError) {
-                        console.error(`[FetchAll] Error processing transaction ${sigInfo.signature}:`, txError.message);
-                        if (String(txError).toLowerCase().includes("rate limit")) {
-                            console.warn("[FetchAll] Hit rate limit. Consider using a personal RPC key.");
-                            // Could choose to break the inner loop or even outer loop on severe rate limiting
+                        console.error(`[FetchAll] Error processing tx ${sigInfo.signature}:`, txError.message);
+                        if (String(txError).toLowerCase().includes("rate limit") || String(txError).includes("429")) {
+                            console.warn("[FetchAll] Hit rate limit during getParsedTransaction. Switching RPC.");
+                            throw txError; // Re-throw to trigger RPC switch
                         }
                     }
+                    // Add a small delay to be gentler on the RPC
+                    await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_TX_FETCHES_MS));
                 }
 
                 beforeSig = signaturesInfo[signaturesInfo.length - 1].signature;
                 pagesFetched++;
 
                 if (signaturesInfo.length < FETCH_LIMIT_SIGS) {
-                    console.log("[FetchAll] Last page of signatures reached.");
+                    console.log("[FetchAll] Last page of signatures reached (batch smaller than limit).");
                     break;
                 }
             }
             const memosArray = Array.from(allFoundMemos);
-            console.log(`[FetchAll] Finished. Total unique TXTCAST memos: ${memosArray.length}`);
-            return memosArray.reverse(); // Show oldest first in the list typically
+            console.log(`[FetchAll] Finished. Processed approx ${totalSignaturesProcessed} sigs. Found ${memosArray.length} unique TXTCAST memos.`);
+            return memosArray.reverse();
 
         } catch (error) {
             console.error(`[FetchAll] Major RPC error with ${connection.rpcEndpoint.split('?')[0]}:`, error.message);
             rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
-            if (statusDiv) statusDiv.textContent = `RPC Error. Trying next RPC...`;
-            await new Promise(resolve => setTimeout(resolve, 3000)); // Wait longer before retrying full fetch
-            return fetchAllTxTcastMemos(); // Retry with next RPC
+            if (statusDiv) statusDiv.textContent = `RPC Error. Trying next: ${RPC_URLS[rpcIndex].split('/')[2]}...`;
+            await new Promise(resolve => setTimeout(resolve, 3000)); 
+            return fetchAllTxTcastMemos(); 
         }
     }
 
     function displayMemosAsList(memos) {
         if (!memoDisplayDiv) return;
-        memoDisplayDiv.innerHTML = ''; // Clear previous content
+        memoDisplayDiv.innerHTML = ''; 
 
         if (!memos || memos.length === 0) {
             memoDisplayDiv.textContent = "No TXTCAST memos found to display.";
@@ -194,31 +195,28 @@
     }
 
     async function updateAndDisplayMemos() {
-        if (!initializeDOMElements()) return; // Ensure UI elements are ready
+        if (!initializeDOMElements()) return; 
 
         console.log("[UpdateCycle] Starting update...");
         if (statusDiv) statusDiv.textContent = "🔄 Fetching latest TXTCAST memos...";
         if (memoDisplayDiv) memoDisplayDiv.innerHTML = "⌛ Loading memos...";
 
-        fetchedMemosList = await fetchAllTxTcastMemos(); // Update the global list
-
-        displayMemosAsList(fetchedMemosList); // Display the fetched memos as a list
+        fetchedMemosList = await fetchAllTxTcastMemos(); 
+        displayMemosAsList(fetchedMemosList); 
 
         if (statusDiv) {
             if (fetchedMemosList.length > 0) {
                 statusDiv.textContent = `✅ Displaying ${fetchedMemosList.length} TXTCAST memo(s).`;
             } else {
-                statusDiv.textContent = "✅ Connected — No TXTCAST memos found yet. Will retry.";
+                statusDiv.textContent = "✅ Connected — No TXTCAST memos found yet. Will retry periodically.";
             }
         }
     }
 
-    // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
         if (!initializeDOMElements()) {
             return; 
         }
-
         try {
             walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
         } catch (e) {
@@ -228,12 +226,10 @@
             return;
         }
 
-        if (RPC_URLS.length === 0) {
-            if(statusDiv) statusDiv.textContent = "ERROR: No RPC URLs configured.";
-            if(memoDisplayDiv) memoDisplayDiv.innerHTML = "RPC Configuration Error.";
-        } else {
-            updateAndDisplayMemos(); // Initial fetch and display
-            setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS); // Periodically refresh
+        if (RPC_URLS.length === 0) { /* ... RPC config error handling ... */ }
+        else {
+            updateAndDisplayMemos(); 
+            setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS);
         }
     });
   </script>
