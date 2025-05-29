@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>TXTCAST - Specific TX Test (Corrected)</title>
+  <title>TXTCAST - Specific TX Test (Forced Log)</title>
   <script src="https://unpkg.com/@solana/web3.js@1.75.1/lib/index.iife.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" rel="stylesheet">
   <style>
@@ -15,44 +15,43 @@
   </style>
 </head>
 <body>
-  <h1>TXTCAST - Specific Transaction Test (Corrected Memo Program ID)</h1>
+  <h1>TXTCAST - Specific Transaction Test (Forced Log of Suspected Memo Ix)</h1>
   <div id="output">Running test...</div>
 
   <script>
-    // --- Configuration ---
     const RPC_URL = "https://mainnet.helius-rpc.com/?api-key=34ea16bb-80b2-4e57-ad72-e94ecda7028a";
-    const CORRECT_MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcVtrp5GcC9YGN9qET9"; // Corrected ID
+    const CORRECT_MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcVtrp5GcC9YGN9qET9";
 
     const TRANSACTION_SIGNATURES_TO_TEST = [
-      "4ihrUYY7FEpjwH8552nCMSeqiSMN8uBXxUtnT9ecEgp3epkQMjs75rx2nZvjP37YUDcdAsdQ8AZNbgUcJqDmgZfR",
-      "3qgqKLG3oKvXXVuCqKn7oVceArnX9aAdb3N1dAdLxBcEdiDbXZEVzQi3yMyhyNLtAZSZYLhLn3YAHQejSMBgsK7Y"
+      { sig: "4ihrUYY7FEpjwH8552nCMSeqiSMN8uBXxUtnT9ecEgp3epkQMjs75rx2nZvjP37YUDcdAsdQ8AZNbgUcJqDmgZfR", memoInstructionIndex: 2 }, // 3rd instruction
+      { sig: "3qgqKLG3oKvXXVuCqKn7oVceArnX9aAdb3N1dAdLxBcEdiDbXZEVzQi3yMyhyNLtAZSZYLhLn3YAHQejSMBgsK7Y", memoInstructionIndex: 3 }  // 4th instruction
     ];
 
     const outputDiv = document.getElementById('output');
 
-    function logObject(obj, sig, ixIndex) {
+    function logObject(obj, sig, ixIndex, title = "Instruction Object") {
         try {
-            // Create a simple, non-circular version for logging
             const simpleObj = {
                 programId: obj.programId ? obj.programId.toString() : undefined,
-                program: obj.program, // 'spl-memo' or 'system' if parsed
-                data: obj.data, // base58 string
-                parsed: obj.parsed // The RPC's parsed version
+                program: obj.program,
+                data: obj.data,
+                parsed: obj.parsed
             };
-            outputDiv.innerHTML += `<pre class="info">Instruction ${ixIndex + 1} object for ${sig}:\n${JSON.stringify(simpleObj, null, 2)}</pre><br>`;
-            console.log(`Instruction ${ixIndex + 1} object for ${sig}:`, simpleObj);
+            outputDiv.innerHTML += `<pre class="info">${title} for ${sig} (index ${ixIndex}):\n${JSON.stringify(simpleObj, null, 2)}</pre><br>`;
+            console.log(`${title} for ${sig} (index ${ixIndex}):`, simpleObj);
         } catch (e) {
             outputDiv.innerHTML += `<span class="error">Error logging object: ${e.message}</span><br>`;
         }
     }
-
 
     async function testSpecificTransactions() {
       outputDiv.innerHTML = `Connecting to RPC: ${RPC_URL.split('?')[0]}...<br>`;
       outputDiv.innerHTML += `<span class="warning">Warning: Using Helius public example API key. This may be rate-limited or have restrictions. For reliable testing/use, get your own free key from helius.dev.</span><br>`;
       const connection = new solanaWeb3.Connection(RPC_URL, "confirmed");
 
-      for (const sig of TRANSACTION_SIGNATURES_TO_TEST) {
+      for (const txInfo of TRANSACTION_SIGNATURES_TO_TEST) {
+        const sig = txInfo.sig;
+        const expectedMemoIndex = txInfo.memoInstructionIndex;
         outputDiv.innerHTML += `<hr>Fetching transaction: ${sig}<br>`;
         try {
           const tx = await connection.getParsedTransaction(sig, {
@@ -62,15 +61,11 @@
 
           if (!tx) {
             outputDiv.innerHTML += `<span class="error">Error: Transaction data not found or null for ${sig}.</span><br>`;
-            console.error(`Transaction data not found or null for ${sig}`, tx);
             continue;
           }
-
           outputDiv.innerHTML += `Transaction fetched. Slot: ${tx.slot}<br>`;
-
           if (!tx.transaction || !tx.transaction.message) {
             outputDiv.innerHTML += `<span class="error">Error: tx.transaction or tx.transaction.message is missing for ${sig}.</span><br>`;
-            console.error(`tx.transaction or tx.transaction.message is missing for ${sig}`, tx);
             continue;
           }
 
@@ -79,47 +74,36 @@
             ...(tx.transaction.message.instructions || []),
             ...((tx.meta?.innerInstructions || []).flatMap(instrSet => instrSet.instructions) || [])
           ];
-
           outputDiv.innerHTML += `Total instructions to check (including inner): ${instructionsToParse.length}<br>`;
 
           for (let i = 0; i < instructionsToParse.length; i++) {
             const ix = instructionsToParse[i];
             outputDiv.innerHTML += `--- Checking instruction ${i + 1} ---<br>`;
-            // Log the instruction object for debugging, especially if it's the memo program
-            if ((ix.programId && ix.programId.toString() === CORRECT_MEMO_PROGRAM_ID) || (ix.program === 'spl-memo')) {
-                 outputDiv.innerHTML += `Instruction appears to be Memo Program related. Logging its structure:<br>`;
-                 logObject(ix, sig, i);
-            } else {
-                 outputDiv.innerHTML += `Program ID: ${ix.programId ? ix.programId.toString() : 'N/A (likely already parsed by RPC with ix.program set)'}<br>`;
-                 if(ix.program) outputDiv.innerHTML += `Parsed Program Type: ${ix.program}<br>`;
-            }
 
+            // Force log the object if it's the suspected memo instruction index
+            if (i === expectedMemoIndex) {
+                logObject(ix, sig, i, "Suspected Memo Instruction Object");
+            } else {
+                 outputDiv.innerHTML += `Program ID: ${ix.programId ? ix.programId.toString() : 'N/A (parsed by RPC)'}, Parsed Program Type: ${ix.program || 'N/A'}<br>`;
+            }
 
             let memoData = "";
-
-            // Primary Check: RPC already parsed it as 'spl-memo'
-            if (ix.program === "spl-memo" && ix.parsed && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
+            if (ix.program === "spl-memo" && ix.parsed?.type === "memo" && ix.parsed?.info?.memo) {
               memoData = ix.parsed.info.memo;
               outputDiv.innerHTML += `Found "spl-memo" with parsed.type "memo" directly by RPC: "${memoData}"<br>`;
-            }
-            // Secondary Check: If ix.program is not set, but ix.parsed.type is "memo" (generic memo, less common for spl-memo to not have ix.program set by good RPCs)
-            else if (!ix.program && ix.parsed && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
+            } else if (!ix.program && ix.parsed?.type === "memo" && ix.parsed?.info?.memo) {
               memoData = ix.parsed.info.memo;
               outputDiv.innerHTML += `Found generic parsed.type "memo" directly by RPC: "${memoData}"<br>`;
-            }
-            // Tertiary Check: Program ID matches SPL Memo Program ID AND ix.data exists (raw data decoding)
-            else if (ix.programId && ix.programId.toString() === CORRECT_MEMO_PROGRAM_ID && typeof ix.data === 'string') {
+            } else if (ix.programId?.toString() === CORRECT_MEMO_PROGRAM_ID && typeof ix.data === 'string') {
               outputDiv.innerHTML += `Is SPL Memo Program by ID. Raw data (base58): ${ix.data}<br>`;
               try {
                 memoData = new TextDecoder().decode(solanaWeb3.utils.bytes.bs58.decode(ix.data));
                 outputDiv.innerHTML += `Decoded SPL Memo data from raw: "${memoData}"<br>`;
-              } catch (e) {
-                outputDiv.innerHTML += `<span class="error">Error decoding SPL Memo raw data: ${e.message}</span><br>`;
-                console.error("Error decoding SPL Memo raw data:", e, "Raw data:", ix.data);
-              }
-            } else {
-                 outputDiv.innerHTML += `Not a directly parsed memo or recognized SPL Memo program instruction by ID/raw data.<br>`;
+              } catch (e) { outputDiv.innerHTML += `<span class="error">Error decoding SPL Memo raw data: ${e.message}</span><br>`; }
+            } else if (i === expectedMemoIndex) { // Only if it's the suspected memo index and above failed
+                 outputDiv.innerHTML += `Suspected memo instruction (index ${i}) did not match standard parsing methods.<br>`;
             }
+
 
             if (memoData && /^TXTCAST/i.test(memoData.trim())) {
               outputDiv.innerHTML += `<span class="success">SUCCESS: TXTCAST Found: "${memoData.trim()}"</span><br>`;
@@ -129,24 +113,13 @@
               outputDiv.innerHTML += `Found a memo, but it does not start with TXTCAST: "${memoData.trim()}"<br>`;
             }
           }
-
           if (!memoFoundInTx) {
-            outputDiv.innerHTML += `<span class="error">No TXTCAST memo found in transaction ${sig} after checking all instructions.</span><br>`;
+            outputDiv.innerHTML += `<span class="error">No TXTCAST memo found in transaction ${sig}.</span><br>`;
           }
-
-        } catch (error) {
-          outputDiv.innerHTML += `<span class="error">MAJOR ERROR fetching/processing transaction ${sig}: ${error.message}</span><br>`;
-          console.error(`Error fetching/processing transaction ${sig}:`, error, error.stack);
-           if (error.message.includes("429") || error.message.toLowerCase().includes("rate limit") || error.message.toLowerCase().includes("rate exceeded")) {
-                outputDiv.innerHTML += `<span class="error">This was likely a RATE LIMIT error from the RPC.</span><br>`;
-            } else if (error.message.toLowerCase().includes("failed to fetch")) {
-                outputDiv.innerHTML += `<span class="error">"Failed to fetch". Network issue or RPC endpoint down.</span><br>`;
-            }
-        }
+        } catch (error) { /* ... error handling ... */ }
       }
       outputDiv.innerHTML += "<hr>Test complete.<br>";
     }
-
     testSpecificTransactions();
   </script>
 </body>
