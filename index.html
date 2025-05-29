@@ -9,25 +9,46 @@
     body { background: #000; margin: 0; padding: 0; font-family: 'Fira Code', monospace; color: #0f0; }
     .wrapper { max-width: 800px; margin: 3em auto; background: #111; padding: 2em; border-radius: 12px; box-shadow: 0 0 20px #0f03; }
     h1 { font-size: 1.8em; color: #fff; text-align: center; margin-bottom: 1em; }
-    .memo-box { background: #000; padding: 1em; border-radius: 8px; border: 1px solid #333; height: 260px; overflow-y: auto; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; line-height: 1.4; }
-    .memo-item {
-        padding-bottom: 0.5em;
-        margin-bottom: 0.5em;
-        border-bottom: 1px dashed #333;
+    .memo-box {
+        background: #000;
+        padding: 1em;
+        border-radius: 8px;
+        border: 1px solid #333;
+        height: 260px;
+        overflow-y: auto;
+        font-size: 12px; /* <<< SMALLER FONT SIZE */
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        line-height: 1.5; /* Adjusted for smaller font */
+        color: #0f0; /* Base color */
+        text-shadow: /* <<< GLOW EFFECT */
+            0 0 5px #0f0,
+            0 0 10px #0f0,
+            0 0 15px #0f0,
+            0 0 20px #070; /* Darker green for outer glow */
     }
-    .memo-item:last-child {
-        border-bottom: none;
+    .cursor {
+        display: inline-block;
+        width: 5px; /* Slightly thinner cursor */
+        animation: blink 0.7s infinite;
+        background: #0f0;
+        height: 0.9em; /* Adjusted to font size */
+        vertical-align: baseline; /* Better alignment with text */
+        box-shadow: /* Cursor also glows */
+            0 0 5px #0f0,
+            0 0 10px #0f0;
     }
+    @keyframes blink { 50% { opacity: 0; } }
     .status { color: #888; font-size: 12px; margin-top: 1em; text-align: center; }
-    .rpc-warning { display: none !important; /* Force hide as per request */ }
+    .rpc-warning { display: none !important; }
   </style>
 </head>
 <body>
   <div class="wrapper">
     <h1>📡 TXTCAST Viewer</h1>
-    <div class="memo-box" id="memoDisplay">Initializing...</div>
+    <div class="memo-box" id="memoDisplay">Initializing...<span class="cursor"></span></div>
     <div class="status" id="statusDisplay">Connecting to Solana RPC...</div>
-    <div class="rpc-warning" id="rpcWarningMessage"></div> <!-- Element remains but styled hidden -->
+    <div class="rpc-warning" id="rpcWarningMessage"></div>
   </div>
 
   <script>
@@ -37,41 +58,91 @@
 
     const RPC_URLS = [
       `https://mainnet.helius-rpc.com/?api-key=${HELIUS_PUBLIC_EXAMPLE_KEY}`,
-      "https://api.mainnet-beta.solana.com", // Fallback
+      "https://api.mainnet-beta.solana.com",
     ];
 
     const WALLET_ADDRESS = "9Er7ydwgEXhun5L2mHmmcjBP5qUxLYFF44PuQttNo2Sx";
     const FETCH_LIMIT_SIGS = 100;
-    const MAX_SIGNATURE_PAGES = 7;  // Increased scan depth slightly (700 transactions)
-    const DELAY_BETWEEN_TX_FETCHES_MS = 100; // Small delay to be gentler on RPC
-    const REFRESH_INTERVAL_MS = 180000; // 3 minutes
+    const MAX_SIGNATURE_PAGES = 7;
+    const DELAY_BETWEEN_TX_FETCHES_MS = 100;
+    const TYPING_SPEED_MS = 30; // Slightly adjusted typing speed
+    const MEMO_DISPLAY_DURATION_MS = 6000; // Time to show a full memo before cycling
+    const REFRESH_INTERVAL_MS = 180000;
+
+    // --- Audio Context for Blip Sound ---
+    let audioCtx;
+    let blipOscillator;
+    let blipGain;
+
+    function setupAudio() {
+        if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+    // Call setupAudio once, perhaps after a user interaction if strict autoplay policies are an issue,
+    // but for this, we'll try on load.
+    // Browsers might require a user gesture (like a click) to start audio.
+    // We can call setupAudio() inside a click handler or on first type if needed.
+
+
+    function playBlip() {
+        if (!audioCtx) { // Try to initialize if not already
+            setupAudio();
+            if (!audioCtx) return; // Still no audio context
+        }
+
+        // Create oscillator and gain node if they don't exist or to reset
+        blipOscillator = audioCtx.createOscillator();
+        blipGain = audioCtx.createGain();
+
+        blipOscillator.connect(blipGain);
+        blipGain.connect(audioCtx.destination);
+
+        blipOscillator.type = 'sine'; // Sine wave for a clean tone
+        blipOscillator.frequency.setValueAtTime(1200, audioCtx.currentTime); // High tone (Hz)
+        blipGain.gain.setValueAtTime(0.1, audioCtx.currentTime); // Adjust volume (0 to 1)
+
+        blipOscillator.start(audioCtx.currentTime);
+        // Make the sound very short
+        blipGain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.05); // Quick fade out
+        blipOscillator.stop(audioCtx.currentTime + 0.05);
+    }
+
 
     let rpcIndex = 0;
     let walletPublicKey;
     let memoDisplayDiv;
     let statusDiv;
+    let cursorElement; // Re-added for typewriter
 
-    let fetchedMemosList = [];
+    let currentMemos = [];    // Stores all fetched memos
+    let currentMemoIndex = 0; // Index for cycling through currentMemos
+    let isTyping = false;
+    let displayCycleTimeoutId = null;
+
 
     function initializeDOMElements() {
         memoDisplayDiv = document.getElementById('memoDisplay');
         statusDiv = document.getElementById('statusDisplay');
+        cursorElement = document.createElement('span'); // Create cursor for typewriter
+        cursorElement.className = 'cursor';
+
         if (!memoDisplayDiv || !statusDiv) {
             console.error("CRITICAL: UI DOM elements not found.");
             document.body.innerHTML = "<h1 style='color:red; text-align:center;'>Critical Error: UI Elements Missing.</h1>";
             return false;
         }
         memoDisplayDiv.innerHTML = "Initializing...";
+        if(cursorElement) memoDisplayDiv.appendChild(cursorElement); // Add cursor initially
         return true;
     }
 
-    const getConnection = () => {
+    const getConnection = () => { /* ... same as before ... */
         const activeRpcUrl = RPC_URLS[rpcIndex % RPC_URLS.length];
         console.log(`[Connection] Using RPC: ${activeRpcUrl.split('?')[0]}`);
         return new solanaWeb3.Connection(activeRpcUrl, "confirmed");
     };
-
-    function extractMemoFromInstruction(ix) {
+    const extractMemoFromInstruction = (ix) => { /* ... same as before ... */
         let memoData = "";
         if (ix.program === "spl-memo") {
             if (ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
@@ -87,9 +158,8 @@
             } catch (e) { console.warn("Error decoding raw SPL Memo data:", e.message); }
         }
         return memoData.trim();
-    }
-
-    async function fetchAllTxTcastMemos() {
+    };
+    const fetchAllTxTcastMemos = async () => { /* ... same as before, ensuring it returns memosArray.reverse() ... */
         if (!walletPublicKey) {
             console.error("Wallet PublicKey not initialized.");
             if (statusDiv) statusDiv.textContent = "Error: Wallet not initialized.";
@@ -149,10 +219,9 @@
                         console.error(`[FetchAll] Error processing tx ${sigInfo.signature}:`, txError.message);
                         if (String(txError).toLowerCase().includes("rate limit") || String(txError).includes("429")) {
                             console.warn("[FetchAll] Hit rate limit during getParsedTransaction. Switching RPC.");
-                            throw txError; // Re-throw to trigger RPC switch
+                            throw txError; 
                         }
                     }
-                    // Add a small delay to be gentler on the RPC
                     await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_TX_FETCHES_MS));
                 }
 
@@ -166,7 +235,7 @@
             }
             const memosArray = Array.from(allFoundMemos);
             console.log(`[FetchAll] Finished. Processed approx ${totalSignaturesProcessed} sigs. Found ${memosArray.length} unique TXTCAST memos.`);
-            return memosArray.reverse();
+            return memosArray.reverse(); // Oldest of the fetched batch first for cycling
 
         } catch (error) {
             console.error(`[FetchAll] Major RPC error with ${connection.rpcEndpoint.split('?')[0]}:`, error.message);
@@ -175,63 +244,12 @@
             await new Promise(resolve => setTimeout(resolve, 3000)); 
             return fetchAllTxTcastMemos(); 
         }
-    }
+    };
 
-    function displayMemosAsList(memos) {
-        if (!memoDisplayDiv) return;
-        memoDisplayDiv.innerHTML = ''; 
 
-        if (!memos || memos.length === 0) {
-            memoDisplayDiv.textContent = "No TXTCAST memos found to display.";
-            return;
-        }
+    // --- Typewriter and Cycling Logic ---
+    async function typeText(element, text) {
+        if (!element || !cursorElement) return;
+        element.innerHTML = ""; // Clear previous content before typing new memo
 
-        memos.forEach(memoText => {
-            const memoElement = document.createElement('div');
-            memoElement.className = 'memo-item';
-            memoElement.textContent = memoText;
-            memoDisplayDiv.appendChild(memoElement);
-        });
-    }
-
-    async function updateAndDisplayMemos() {
-        if (!initializeDOMElements()) return; 
-
-        console.log("[UpdateCycle] Starting update...");
-        if (statusDiv) statusDiv.textContent = "🔄 Fetching latest TXTCAST memos...";
-        if (memoDisplayDiv) memoDisplayDiv.innerHTML = "⌛ Loading memos...";
-
-        fetchedMemosList = await fetchAllTxTcastMemos(); 
-        displayMemosAsList(fetchedMemosList); 
-
-        if (statusDiv) {
-            if (fetchedMemosList.length > 0) {
-                statusDiv.textContent = `✅ Displaying ${fetchedMemosList.length} TXTCAST memo(s).`;
-            } else {
-                statusDiv.textContent = "✅ Connected — No TXTCAST memos found yet. Will retry periodically.";
-            }
-        }
-    }
-
-    document.addEventListener('DOMContentLoaded', () => {
-        if (!initializeDOMElements()) {
-            return; 
-        }
-        try {
-            walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
-        } catch (e) {
-            console.error("Invalid Wallet Address:", WALLET_ADDRESS, e);
-            if (statusDiv) statusDiv.textContent = "ERROR: Invalid Wallet Address.";
-            if (memoDisplayDiv) memoDisplayDiv.innerHTML = "Configuration Error.";
-            return;
-        }
-
-        if (RPC_URLS.length === 0) { /* ... RPC config error handling ... */ }
-        else {
-            updateAndDisplayMemos(); 
-            setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS);
-        }
-    });
-  </script>
-</body>
-</html>
+        //
