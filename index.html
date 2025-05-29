@@ -5,46 +5,115 @@
   <title>TXTCAST FEED</title>
   <script src="https://unpkg.com/@solana/web3.js@1.75.1/lib/index.iife.min.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" rel="stylesheet">
+  <!-- You can add other font links here if needed -->
   <style>
-    body { background: #000; margin: 0; padding: 0; font-family: 'Fira Code', monospace; color: #0f0; }
-    .wrapper { max-width: 800px; margin: 3em auto; background: #111; padding: 2em; border-radius: 12px; box-shadow: 0 0 20px #0f03; }
-    h1 { font-size: 1.8em; color: #fff; text-align: center; margin-bottom: 1em; }
-    .memo-box {
-        background: #000;
+    body {
+        background: transparent; /* TRANSPARENT BACKGROUND */
+        margin: 0;
+        padding: 0;
+        font-family: 'Fira Code', monospace; /* Default font */
+        color: #0f0;
+    }
+    .wrapper {
+        max-width: 800px;
+        margin: 3em auto;
+        background: rgba(17, 17, 17, 0.8); /* Semi-transparent dark background for readability if embedded */
         padding: 2em;
-        border-radius: 10px;
+        border-radius: 12px;
+        box-shadow: 0 0 20px #0f03;
+    }
+    .title-container {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1em;
+    }
+    .logo {
+        width: 40px; /* Adjust size as needed */
+        height: 40px;
+        margin-right: 10px;
+        border-radius: 50%; /* Optional: if logo is circular */
+    }
+    h1 {
+        font-size: 1.8em;
+        color: #fff;
+        text-align: center;
+        margin: 0; /* Remove default margin if logo is next to it */
+    }
+    .memo-box {
+        background: #000; /* Black background for the memo box itself */
+        padding: 1em;
+        border-radius: 8px;
         border: 1px solid #333;
-        height: 400px; /* Slightly increased height for list */
+        height: 260px;
         overflow-y: auto;
-        font-size: 10px; /* Smaller font size */
+        font-size: 10px; /* <<< FONT SIZE 10PX FOR MEMOS */
         white-space: pre-wrap;
         word-wrap: break-word;
-        line-height: 2;
+        line-height: 1.6; /* Adjust for smaller font */
         color: #0f0;
-        text-shadow: /* Green glow effect */
-            0 0 1px #0f0,
-            0 0 1px #0f0,
+        text-shadow:
             0 0 5px #0f0,
-            0 0 2px #070;
+            0 0 10px #0f0,
+            0 0 15px #0f0,
+            0 0 20px #070;
     }
-    .memo-item { /* Styling for each memo in the list */
-        padding: 0.5em 0;
-        border-bottom: 1px dashed #222; /* Softer separator */
+    .cursor {
+        display: inline-block;
+        width: 4px; /* Thinner cursor for smaller font */
+        animation: blink 0.7s infinite;
+        background: #0f0;
+        height: 0.9em;
+        vertical-align: baseline;
+        margin-left: 1px;
+        box-shadow:
+            0 0 5px #0f0,
+            0 0 10px #0f0;
     }
-    .memo-item:last-child {
-        border-bottom: none;
-    }
-    /* No cursor needed for list display */
+    @keyframes blink { 50% { opacity: 0; } }
     .status { color: #888; font-size: 12px; margin-top: 1em; text-align: center; }
-    .rpc-warning { display: none !important; }
+    .controls {
+        text-align: center;
+        margin-top: 1em;
+    }
+    .control-button {
+        background: #050;
+        color: #0f0;
+        border: 1px solid #0f0;
+        padding: 8px 15px;
+        margin: 0 5px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-family: 'Fira Code', monospace;
+        font-size: 12px;
+        text-shadow: 0 0 3px #0f0;
+    }
+    .control-button:hover {
+        background: #070;
+        box-shadow: 0 0 10px #0f0;
+    }
+    .control-button:disabled {
+        background: #333;
+        color: #777;
+        border-color: #777;
+        cursor: not-allowed;
+        text-shadow: none;
+    }
   </style>
 </head>
 <body>
   <div class="wrapper">
-    <h1>📡 TXTCAST FEED</h1>
-    <div class="memo-box" id="memoDisplay">Initializing...</div>
-    <div class="status" id="statusDisplay">Connecting to Solana RPC...</div>
-    <div class="rpc-warning" id="rpcWarningMessage"></div>
+    <div class="title-container">
+      <img src="https://bafybeig7wrnvjiwzp5unwveebxu6pql7ib4qbkvcyjrcca2if7vvemsa5a.ipfs.web3approved.com/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjaWQiOiJiYWZ5YmVpZzd3cm52aml3enA1dW53dmVlYnh1NnBxbDdpYjRxYmt2Y3lqcmNjYTJpZjd2dmVtc2E1YSIsInByb2plY3RfdXVpZCI6IjNmZmNmYzMxLWM4OWItNDZhMC1iMzUyLWQzY2FhOGQwZWNkZCIsImlhdCI6MTc0NjE0NzA1NSwic3ViIjoiSVBGUy10b2tlbiJ9.NjYJYJqxFOlv68N8bFzXoOEcUBKqJsAUN6NIHl-6w3M" alt="TXTCAST Logo" class="logo">
+      <h1>TXTCAST Viewer</h1>
+    </div>
+    <div class="memo-box" id="memoDisplay">Press 'Refresh TXTCASTs' to load...<span class="cursor"></span></div>
+    <div class="status" id="statusDisplay">Ready.</div>
+    <div class="controls">
+      <button id="prevButton" class="control-button" disabled>< Prev</button>
+      <button id="refreshButton" class="control-button">Refresh TXTCASTs</button>
+      <button id="nextButton" class="control-button" disabled>Next ></button>
+    </div>
   </div>
 
   <script>
@@ -59,39 +128,83 @@
 
     const WALLET_ADDRESS = "9Er7ydwgEXhun5L2mHmmcjBP5qUxLYFF44PuQttNo2Sx";
     const FETCH_LIMIT_SIGS = 100;
-    const MAX_SIGNATURE_PAGES_TO_FETCH = 7; // How many pages of signatures to check
-    const DELAY_PER_TRANSACTION_MS = 150; // Increased delay to be safer with public RPC
-    const REFRESH_INTERVAL_MS = 240000; // 4 minutes, less frequent refreshes
+    const MAX_SIGNATURE_PAGES_TO_FETCH = 7;
+    const DELAY_PER_TRANSACTION_MS = 150;
+    const TYPING_SPEED_MS = 30;
+
+    // --- Audio Context for Blip Sound ---
+    let audioCtx;
+    function initAudioContext() {
+        if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                console.log("AudioContext initialized.");
+            } catch (e) { console.error("Error initializing AudioContext:", e); }
+        }
+         if (audioCtx && audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(err => console.error("Error resuming AudioContext:", err));
+        }
+    }
+    function playBlip() { /* ... (same as previous correct version) ... */
+        if (!audioCtx || audioCtx.state !== 'running') {
+            // console.warn("AudioContext not available or not running. Blip sound disabled.");
+            return;
+        }
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(1200, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        oscillator.start(audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + 0.04);
+        oscillator.stop(audioCtx.currentTime + 0.04);
+    }
+
 
     let rpcIndex = 0;
     let walletPublicKey;
     let memoDisplayDiv;
     let statusDiv;
+    let cursorElement;
+    let prevButton, nextButton, refreshButton;
 
-    function initializeDOMElements() {
+    let allFetchedMemos = [];    // Stores ALL fetched memos
+    let currentDisplayIndex = -1; // Index of the memo currently being displayed or to be displayed
+    let isTyping = false;
+    let typingAbortController = null; // To abort ongoing typing
+
+    function initializeDOMElements() { /* ... (same as previous version, but ensure buttons are fetched) ... */
         memoDisplayDiv = document.getElementById('memoDisplay');
         statusDiv = document.getElementById('statusDisplay');
-        if (!memoDisplayDiv || !statusDiv) {
-            console.error("CRITICAL: UI DOM elements (memoDisplay or statusDisplay) not found.");
-            document.body.innerHTML = "<h1 style='color:red; text-align:center;'>Critical Error: UI Elements Missing. Check Console.</h1>";
+        cursorElement = document.createElement('span');
+        cursorElement.className = 'cursor';
+        prevButton = document.getElementById('prevButton');
+        nextButton = document.getElementById('nextButton');
+        refreshButton = document.getElementById('refreshButton');
+
+        if (!memoDisplayDiv || !statusDiv || !prevButton || !nextButton || !refreshButton) {
+            console.error("CRITICAL: UI DOM elements not found.");
+            document.body.innerHTML = "<h1 style='color:red; text-align:center;'>Critical Error: UI Elements Missing.</h1>";
             return false;
         }
-        memoDisplayDiv.innerHTML = "Initializing..."; // Initial state
+        // Initial state for memoDisplay with cursor
+        memoDisplayDiv.innerHTML = "Press 'Refresh TXTCASTs' to load...";
+        memoDisplayDiv.appendChild(cursorElement);
         return true;
     }
-
-    const getConnection = () => {
+    const getConnection = () => { /* ... (same) ... */
         const activeRpcUrl = RPC_URLS[rpcIndex % RPC_URLS.length];
         console.log(`[Connection] Using RPC: ${activeRpcUrl.split('?')[0]}`);
         return new solanaWeb3.Connection(activeRpcUrl, "confirmed");
     };
-
-    function extractMemoFromInstruction(ix) {
+    const extractMemoFromInstruction = (ix) => { /* ... (same) ... */
         let memoData = "";
         if (ix.program === "spl-memo") {
             if (ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
                 memoData = ix.parsed.info.memo;
-            } else if (typeof ix.parsed === 'string') { // Key finding for Helius public key
+            } else if (typeof ix.parsed === 'string') {
                 memoData = ix.parsed;
             }
         } else if (!ix.program && ix.parsed && typeof ix.parsed === 'object' && ix.parsed.type === "memo" && ix.parsed.info && typeof ix.parsed.info.memo === 'string') {
@@ -101,164 +214,192 @@
                 memoData = new TextDecoder().decode(solanaWeb3.utils.bytes.bs58.decode(ix.data));
             } catch (e) { console.warn("Error decoding raw SPL Memo data:", e.message); }
         }
-        return memoData.trim();
-    }
-
-    async function fetchAllTxtcastMemos() {
-        if (!walletPublicKey) {
-            console.error("Wallet PublicKey not initialized.");
-            if (statusDiv) statusDiv.textContent = "Error: Wallet not initialized.";
-            return [];
-        }
+        return memoData.trim(); // Ensures leading/trailing spaces removed
+    };
+    const fetchTxtcasts = async () => { /* ... (same, but returns memos as fetched - newest first) ... */
+        if (!walletPublicKey) { /* ... */ return []; }
         const connection = getConnection();
-        if (statusDiv) statusDiv.textContent = `📡 Fetching from ${connection.rpcEndpoint.split('/')[2]}... (this may take a moment)`;
-
-        const allFoundMemos = new Set();
+        /* ... status updates ... */
+        const allFoundMemosSet = new Set();
         let beforeSig = null;
         let pagesFetched = 0;
         let totalSignaturesChecked = 0;
-
         try {
             while (pagesFetched < MAX_SIGNATURE_PAGES_TO_FETCH) {
                 const options = { limit: FETCH_LIMIT_SIGS };
                 if (beforeSig) options.before = beforeSig;
-                
                 console.log(`[FetchMemos] Fetching signatures page ${pagesFetched + 1}/${MAX_SIGNATURE_PAGES_TO_FETCH}, before: ${beforeSig || 'N/A'}`);
                 if (statusDiv) statusDiv.textContent = `📡 Fetching signatures (Page ${pagesFetched + 1})...`;
-                
                 const signaturesInfo = await connection.getSignaturesForAddress(walletPublicKey, options);
-
-                if (!signaturesInfo || signaturesInfo.length === 0) {
-                    console.log(`[FetchMemos] No more signatures found on page ${pagesFetched + 1}.`);
-                    break; 
-                }
-                console.log(`[FetchMemos] Found ${signaturesInfo.length} signatures on page ${pagesFetched + 1}. Processing...`);
+                if (!signaturesInfo || signaturesInfo.length === 0) { break; }
                 totalSignaturesChecked += signaturesInfo.length;
-
                 for (let i = 0; i < signaturesInfo.length; i++) {
                     const sigInfo = signaturesInfo[i];
                     if (statusDiv) statusDiv.textContent = `📡 Processing TX ${i+1}/${signaturesInfo.length} of Page ${pagesFetched+1}...`;
-                    
                     try {
-                        const tx = await connection.getParsedTransaction(sigInfo.signature, {
-                            commitment: "confirmed",
-                            maxSupportedTransactionVersion: 0
-                        });
-
-                        if (!tx?.transaction?.message) {
-                            console.warn(`[FetchMemos] Could not get full parsed tx for ${sigInfo.signature}`);
-                            continue;
-                        }
-
+                        const tx = await connection.getParsedTransaction(sigInfo.signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+                        if (!tx?.transaction?.message) continue;
                         const instructions = [
                             ...(tx.transaction.message.instructions || []),
                             ...((tx.meta?.innerInstructions || []).flatMap(instr => instr.instructions) || [])
                         ];
-
                         for (const ix of instructions) {
                             const memo = extractMemoFromInstruction(ix);
                             if (memo && /^TXTCAST/i.test(memo)) {
-                                console.log(`[FetchMemos] TXTCAST Found: "${memo.substring(0,40)}..."`);
-                                allFoundMemos.add(memo);
+                                allFoundMemosSet.add(memo);
                                 break; 
                             }
                         }
                     } catch (txError) {
-                        console.error(`[FetchMemos] Error processing tx ${sigInfo.signature}:`, txError.message);
                         if (String(txError).toLowerCase().includes("rate limit") || String(txError).includes("429")) {
-                            console.warn("[FetchMemos] Hit rate limit. Will switch RPC on next main fetch attempt.");
-                            throw txError; // Re-throw to trigger outer catch and RPC switch
+                            throw txError; 
                         }
-                        // For other errors, we might just skip this transaction and continue
                     }
-                    // More conservative delay
                     await new Promise(resolve => setTimeout(resolve, DELAY_PER_TRANSACTION_MS));
                 }
-
                 beforeSig = signaturesInfo[signaturesInfo.length - 1].signature;
                 pagesFetched++;
-
-                if (signaturesInfo.length < FETCH_LIMIT_SIGS) {
-                    console.log("[FetchMemos] Last page of signatures reached (batch smaller than limit).");
-                    break;
-                }
-            } // end while loop for pages
-
-            const memosArray = Array.from(allFoundMemos);
+                if (signaturesInfo.length < FETCH_LIMIT_SIGS) break;
+            }
+            const memosArray = Array.from(allFoundMemosSet);
             console.log(`[FetchMemos] Finished. Checked ~${totalSignaturesChecked} transactions. Found ${memosArray.length} unique TXTCAST memos.`);
-            return memosArray.reverse(); // Typically, newest transactions are fetched first by getSignaturesForAddress. Reverse to show oldest first in list.
-
-        } catch (error) { // Catch errors from getSignaturesForAddress or re-thrown errors
+            // DO NOT REVERSE: getSignaturesForAddress returns newest first by default.
+            return memosArray;
+        } catch (error) {
             console.error(`[FetchMemos] Major RPC error with ${connection.rpcEndpoint.split('?')[0]}:`, error.message);
-            rpcIndex = (rpcIndex + 1) % RPC_URLS.length; // Try next RPC
+            rpcIndex = (rpcIndex + 1) % RPC_URLS.length;
             if (statusDiv) statusDiv.textContent = `RPC Error. Trying next: ${RPC_URLS[rpcIndex % RPC_URLS.length].split('/')[2]}...`;
-            await new Promise(resolve => setTimeout(resolve, 5000)); // Wait longer before retrying full fetch
-            return fetchAllTxtcastMemos(); // Recursive call to try next RPC / method
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            return fetchTxtcasts(); // Retry
         }
-    }
+    };
 
-    function renderMemoList(memos) {
-        if (!memoDisplayDiv) return;
-        memoDisplayDiv.innerHTML = ''; // Clear previous "Initializing..." or "Loading..."
-
-        if (!memos || memos.length === 0) {
-            memoDisplayDiv.textContent = "No TXTCAST memos found to display.";
-            return;
-        }
-
-        memos.forEach(memoText => {
-            const memoElement = document.createElement('div');
-            memoElement.className = 'memo-item';
-            memoElement.textContent = memoText;
-            memoDisplayDiv.appendChild(memoElement);
-        });
-    }
-
-    async function updateAndDisplayMemos() {
-        // Ensure DOM elements are ready (should be due to DOMContentLoaded)
-        if (!memoDisplayDiv || !statusDiv) {
-            console.error("UI elements not available for update.");
-            return;
-        }
-
-        console.log("[UpdateCycle] Starting update...");
-        statusDiv.textContent = "🔄 Fetching latest TXTCAST memos...";
-        memoDisplayDiv.innerHTML = "⌛ Loading memos..."; // Show loading in memo box
-
-        const fetchedMemos = await fetchAllTxtcastMemos();
-        renderMemoList(fetchedMemos);
-
-        if (statusDiv) {
-            if (fetchedMemos.length > 0) {
-                statusDiv.textContent = `✅ Displaying ${fetchedMemos.length} TXTCAST memo(s). Refreshes every ${REFRESH_INTERVAL_MS / 60000} mins.`;
-            } else {
-                statusDiv.textContent = `✅ Connected — No TXTCAST memos found this cycle. Will retry.`;
+    async function typeOutMemo(memoIndex) {
+        if (isTyping) { // Abort previous typing if any
+            if (typingAbortController) {
+                typingAbortController.abort();
             }
         }
+        isTyping = true;
+        typingAbortController = new AbortController();
+        const signal = typingAbortController.signal;
+
+        memoDisplayDiv.innerHTML = ""; // Clear previous
+        memoDisplayDiv.appendChild(cursorElement);
+
+        if (memoIndex < 0 || memoIndex >= allFetchedMemos.length) {
+            memoDisplayDiv.textContent = "No memo selected or index out of bounds.";
+            if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
+            isTyping = false;
+            updateButtonStates();
+            return;
+        }
+
+        const text = allFetchedMemos[memoIndex];
+        let currentText = "";
+
+        try {
+            for (let i = 0; i < text.length; i++) {
+                if (signal.aborted) {
+                    console.log("Typing aborted");
+                    memoDisplayDiv.textContent = text; // Show full text if aborted
+                    if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
+                    break;
+                }
+                currentText += text[i];
+                memoDisplayDiv.textContent = currentText;
+                memoDisplayDiv.appendChild(cursorElement);
+                playBlip();
+                await new Promise(r => setTimeout(r, TYPING_SPEED_MS));
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                // Expected if aborted, full text is already displayed
+            } else {
+                console.error("Error during typing:", error);
+                memoDisplayDiv.textContent = text; // Show full text on other errors
+            }
+        } finally {
+            isTyping = false;
+            // Don't remove cursor immediately, let it blink at the end
+            // if(cursorElement.parentNode === memoDisplayDiv && !signal.aborted) memoDisplayDiv.removeChild(cursorElement);
+            updateButtonStates();
+        }
     }
+
+    function updateButtonStates() {
+        prevButton.disabled = currentDisplayIndex <= 0 || isTyping;
+        nextButton.disabled = currentDisplayIndex >= allFetchedMemos.length - 1 || isTyping;
+        refreshButton.disabled = isTyping;
+    }
+
+    async function handleRefresh() {
+        if (isTyping) return;
+        initAudioContext(); // Ensure audio is ready on user interaction
+
+        statusDiv.textContent = "🔄 Refreshing TXTCASTs...";
+        refreshButton.disabled = true;
+        prevButton.disabled = true;
+        nextButton.disabled = true;
+
+        allFetchedMemos = await fetchTxtcasts();
+
+        if (allFetchedMemos.length > 0) {
+            currentDisplayIndex = 0; // Start with the latest memo
+            typeOutMemo(currentDisplayIndex);
+            statusDiv.textContent = `✅ ${allFetchedMemos.length} TXTCASTs loaded. Displaying newest.`;
+        } else {
+            currentDisplayIndex = -1;
+            memoDisplayDiv.textContent = "No TXTCASTs found after refresh.";
+            if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
+            statusDiv.textContent = "✅ No TXTCASTs found.";
+        }
+        updateButtonStates();
+    }
+
+    function handlePrev() {
+        if (currentDisplayIndex > 0 && !isTyping) {
+            currentDisplayIndex--;
+            typeOutMemo(currentDisplayIndex);
+        }
+        updateButtonStates();
+    }
+
+    function handleNext() {
+        if (currentDisplayIndex < allFetchedMemos.length - 1 && !isTyping) {
+            currentDisplayIndex++;
+            typeOutMemo(currentDisplayIndex);
+        }
+        updateButtonStates();
+    }
+
 
     // --- Initialization ---
     document.addEventListener('DOMContentLoaded', () => {
-        if (!initializeDOMElements()) {
-            return; // Stop if UI elements are not found
-        }
+        if (!initializeDOMElements()) return;
+
+        // Audio context might need a user gesture to start.
+        // We add listeners, but it's best if the first "Refresh" click also initializes it.
+        document.body.addEventListener('click', initAudioContext, { once: true });
+        document.body.addEventListener('touchstart', initAudioContext, { once: true });
+
 
         try {
             walletPublicKey = new solanaWeb3.PublicKey(WALLET_ADDRESS);
         } catch (e) {
             console.error("Invalid Wallet Address:", WALLET_ADDRESS, e);
-            if (statusDiv) statusDiv.textContent = "ERROR: Invalid Wallet Address.";
-            if (memoDisplayDiv) memoDisplayDiv.innerHTML = "Configuration Error.";
+            statusDiv.textContent = "ERROR: Invalid Wallet Address.";
+            memoDisplayDiv.textContent = "Config Error.";
+            if(cursorElement.parentNode === memoDisplayDiv) memoDisplayDiv.removeChild(cursorElement);
             return;
         }
 
-        if (RPC_URLS.length === 0) {
-            if(statusDiv) statusDiv.textContent = "ERROR: No RPC URLs configured.";
-            if(memoDisplayDiv) memoDisplayDiv.innerHTML = "RPC Configuration Error.";
-        } else {
-            updateAndDisplayMemos(); // Initial fetch and display
-            setInterval(updateAndDisplayMemos, REFRESH_INTERVAL_MS); // Periodically refresh
-        }
+        refreshButton.addEventListener('click', handleRefresh);
+        prevButton.addEventListener('click', handlePrev);
+        nextButton.addEventListener('click', handleNext);
+
+        statusDiv.textContent = "Ready. Press 'Refresh TXTCASTs'.";
+        updateButtonStates(); // Initial button state
     });
   </script>
 </body>
